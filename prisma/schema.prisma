@@ -14,21 +14,21 @@ datasource db {
 }
 
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
@@ -37,11 +37,25 @@ model Change {
   id         String   @id @default(cuid())
   shop       String
   type       String
-  occurredAt DateTime @default(now())
+  occurredAt DateTime
+  receivedAt DateTime @default(now())
+  entityType String?
   entityId   String?
   summary    String
   payload    Json?
   createdAt  DateTime @default(now())
 
   @@index([shop, occurredAt])
+}
+
+model DailyMetric {
+  id        String   @id @default(cuid())
+  shop      String
+  bucketAt  DateTime
+  orders    Int
+  revenue   Float
+  createdAt DateTime @default(now())
+
+  @@unique([shop, bucketAt])
+  @@index([shop, bucketAt])
 }

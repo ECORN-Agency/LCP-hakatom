@@ -39,6 +39,14 @@ export default async function handleRequest(
         },
         onError(error) {
           responseStatusCode = 500;
+          // Suppress App Bridge metrics/logs export errors - they're not critical
+          const errorMessage = error?.message || String(error);
+          if (errorMessage.includes("exporting metrics") || 
+              errorMessage.includes("exporting logs") || 
+              errorMessage.includes("Failed to fetch")) {
+            // Silently ignore - these are App Bridge internal errors
+            return;
+          }
           console.error(error);
         },
       },
