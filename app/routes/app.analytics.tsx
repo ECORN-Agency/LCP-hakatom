@@ -52,6 +52,35 @@ export const action = async ({ request }) => {
   return { ok: false };
 };
 
+// Pull event-type-specific context out of the raw Change row before handing
+// it to the recommendation engine. Keep this pure so it can move into
+// app/models/ later if other surfaces need it.
+function extractEventContext(event) {
+  if (!event) return {};
+
+  if (event.type === "products_update" || event.type === "products_create") {
+    const priceChanges = event?.payload?.changeDetails?.priceChanges;
+    if (!Array.isArray(priceChanges) || priceChanges.length === 0) {
+      return {};
+    }
+    let ups = 0;
+    let downs = 0;
+    for (const change of priceChanges) {
+      const oldP = parseFloat(change?.oldPrice ?? "");
+      const newP = parseFloat(change?.newPrice ?? "");
+      if (!Number.isFinite(oldP) || !Number.isFinite(newP) || oldP === newP) continue;
+      if (newP > oldP) ups += 1;
+      else downs += 1;
+    }
+    if (ups > 0 && downs === 0) return { priceDirection: "up" };
+    if (downs > 0 && ups === 0) return { priceDirection: "down" };
+    if (ups > 0 && downs > 0) return { priceDirection: "mixed" };
+    return {};
+  }
+
+  return {};
+}
+
 export default function Analytics() {
   const { metrics, events, minutes } = useLoaderData();
   const fetcher = useFetcher();
@@ -195,6 +224,7 @@ export default function Analytics() {
     ...observedChangeData,
     recommendation: observedChangeData.waiting ? null : buildRecommendation({
       eventType: selectedEvent.type,
+      eventContext: extractEventContext(selectedEvent),
       revenueDeltaPct: observedChangeData.revenueDeltaPct,
       ordersDeltaPct: observedChangeData.ordersDeltaPct,
       aovDeltaPct: observedChangeData.aovDeltaPct,
@@ -279,6 +309,7 @@ export default function Analytics() {
                 ...eventObservedChangeData,
                 recommendation: eventObservedChangeData.waiting ? null : buildRecommendation({
                   eventType: event.type,
+                  eventContext: extractEventContext(event),
                   revenueDeltaPct: eventObservedChangeData.revenueDeltaPct,
                   ordersDeltaPct: eventObservedChangeData.ordersDeltaPct,
                   aovDeltaPct: eventObservedChangeData.aovDeltaPct,

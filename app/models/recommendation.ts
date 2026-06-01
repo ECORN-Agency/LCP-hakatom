@@ -5,6 +5,10 @@
 
 export function buildRecommendation({
   eventType,
+  // Optional event-specific extras. Currently used:
+  //   priceDirection: "up" | "down" | "mixed" — for products_update events
+  //                   where the caller has computed the dominant variant direction.
+  eventContext = {},
   revenueDeltaPct,
   ordersDeltaPct,
   aovDeltaPct,
@@ -117,7 +121,7 @@ export function buildRecommendation({
     tone = "warning";
   }
 
-  const text = getRecommendationText(eventType, label, strength);
+  const text = getRecommendationText(eventType, label, strength, eventContext);
   const drivers = buildDrivers({
     revenueDeltaPct,
     ordersDeltaPct,
@@ -148,10 +152,10 @@ function getImpactTier(pct) {
   return "neutral";
 }
 
-function getRecommendationText(eventType, label, strength) {
+function getRecommendationText(eventType, label, strength, eventContext = {}) {
   let text = "";
 
-  if (eventType === "theme_published") {
+  if (eventType === "theme_published" || eventType === "theme_switched") {
     if (label === "positive" && strength === "strong") {
       text = "Observed uplift after theme publish. Consider keeping and monitoring a longer window.";
     } else if (label === "negative" && strength === "strong") {
@@ -163,7 +167,66 @@ function getRecommendationText(eventType, label, strength) {
     } else {
       text = "Observed change after theme publish. Monitor longer window.";
     }
+  } else if (eventType === "products_update" || eventType === "products_create") {
+    // Tailor by price direction if the caller computed one.
+    const priceDirection = eventContext?.priceDirection;
+
+    if (priceDirection === "up") {
+      if (label === "positive") {
+        text = "Price increase did not hurt demand — good elasticity signal. Keep an eye on AOV.";
+      } else if (label === "negative" && strength === "strong") {
+        text = "Demand dropped sharply after price increase. Consider partial rollback or A/B on price tiers.";
+      } else if (label === "negative") {
+        text = "Soft drop after price increase. Watch over a longer window before deciding.";
+      } else if (label === "mixed") {
+        text = "Revenue up but orders down — verify the AOV bump actually offsets volume loss.";
+      } else {
+        text = "No clear demand response to the price increase yet.";
+      }
+    } else if (priceDirection === "down") {
+      if (label === "positive" && strength === "strong") {
+        text = "Price drop pulled volume up — confirm margin remains healthy at the new price.";
+      } else if (label === "positive") {
+        text = "Modest lift after price drop. Watch AOV / margin trade-off over a longer window.";
+      } else if (label === "negative") {
+        text = "Price drop did NOT lift demand. Pricing isn't the friction — review PDP / UX / inventory.";
+      } else if (label === "mixed") {
+        text = "Mixed signals. AOV likely fell — confirm order volume gain outweighs margin loss.";
+      } else {
+        text = "No clear demand response to the price drop yet.";
+      }
+    } else if (priceDirection === "mixed") {
+      text = "Multiple variants moved in different directions — break the comparison down by SKU before acting.";
+    } else {
+      // products_update without a price change (e.g. title/SEO/media edit).
+      if (label === "positive") {
+        text = "Product update coincides with positive movement. Confirm cause before scaling the change.";
+      } else if (label === "negative") {
+        text = "Negative movement after product update. Check for accidental unpublish / variant disable.";
+      } else if (label === "mixed") {
+        text = "Mixed signals around the product update. Review what specifically changed.";
+      } else {
+        text = "No clear impact from this product update yet.";
+      }
+    }
+  } else if (eventType === "products_delete") {
+    if (label === "negative") {
+      text = "Negative movement after product delete. Verify nothing critical to discoverability was removed.";
+    } else {
+      text = "Product deletion logged. Monitor a longer window before drawing conclusions.";
+    }
+  } else if (eventType?.startsWith("collections_")) {
+    if (label === "positive") {
+      text = "Positive movement after collection change. Likely safe to keep.";
+    } else if (label === "negative") {
+      text = "Negative movement after collection change. Check that nav / merchandising still reaches the catalog.";
+    } else if (label === "mixed") {
+      text = "Mixed signals after collection change. Compare against a longer window.";
+    } else {
+      text = "No clear impact yet from the collection change.";
+    }
   } else {
+    // Manual / housekeeping / unknown event types
     if (label === "positive") {
       text = "Observed positive change. Monitor longer window.";
     } else if (label === "negative") {
