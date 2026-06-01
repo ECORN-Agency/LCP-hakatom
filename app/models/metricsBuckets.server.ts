@@ -9,11 +9,18 @@ export function normalizeTo10MinBucketUTC(date: Date): Date {
   return d;
 }
 
+// Per-bucket safety cap. 250 orders/page × 20 pages = 5000 orders in a 10-min window.
+// If a real bucket somehow exceeds this we stop and flag `partial=true` rather than
+// looping forever or blowing the Vercel function timeout.
+const MAX_PAGES_PER_BUCKET = 20;
+const PAGE_SIZE = 250;
+
 export async function fetchOrdersStats(admin, sinceISO, untilISO) {
   const ordersQuery = `
-    query getOrders($first: Int!, $query: String!) {
-      orders(first: $first, query: $query) {
+    query getOrders($first: Int!, $after: String, $query: String!) {
+      orders(first: $first, after: $after, query: $query) {
         edges {
+          cursor
           node {
             totalPriceSet {
               shopMoney {
@@ -24,6 +31,7 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO) {
         }
         pageInfo {
           hasNextPage
+          endCursor
         }
       }
     }
@@ -31,30 +39,46 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO) {
 
   const sinceDate = new Date(sinceISO).toISOString();
   const untilDate = new Date(untilISO).toISOString();
-
-  const ordersResponse = await admin.graphql(ordersQuery, {
-    variables: {
-      first: 250,
-      query: `created_at:>=${sinceDate} AND created_at:<${untilDate} AND -test:true`,
-    },
-  });
-
-  if (!ordersResponse.ok) {
-    throw new Error(`GraphQL error: ${ordersResponse.statusText}`);
-  }
-
-  const ordersData = await ordersResponse.json();
+  const queryFilter = `created_at:>=${sinceDate} AND created_at:<${untilDate} AND -test:true`;
 
   let orders = 0;
   let revenue = 0;
-  const partial = ordersData.data?.orders?.pageInfo?.hasNextPage || false;
+  let after: string | null = null;
+  let pages = 0;
+  let partial = false;
 
-  if (ordersData.data?.orders?.edges) {
-    orders = ordersData.data.orders.edges.length;
-    revenue = ordersData.data.orders.edges.reduce((sum, edge) => {
-      const amount = parseFloat(edge.node.totalPriceSet?.shopMoney?.amount || "0");
-      return sum + amount;
-    }, 0);
+  while (true) {
+    const response = await admin.graphql(ordersQuery, {
+      variables: { first: PAGE_SIZE, after, query: queryFilter },
+    });
+
+    if (!response.ok) {
+      throw new Error(`GraphQL error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const edges = data?.data?.orders?.edges ?? [];
+    const pageInfo = data?.data?.orders?.pageInfo ?? { hasNextPage: false, endCursor: null };
+
+    orders += edges.length;
+    for (const edge of edges) {
+      revenue += parseFloat(edge?.node?.totalPriceSet?.shopMoney?.amount || "0");
+    }
+    pages += 1;
+
+    if (!pageInfo.hasNextPage) break;
+
+    if (pages >= MAX_PAGES_PER_BUCKET) {
+      // We hit the safety cap — report partial so the UI can warn the user.
+      logger.warn(
+        { sinceISO, untilISO, pages, ordersSoFar: orders, cap: MAX_PAGES_PER_BUCKET },
+        "fetchOrdersStats hit MAX_PAGES_PER_BUCKET, stopping with partial=true",
+      );
+      partial = true;
+      break;
+    }
+
+    after = pageInfo.endCursor;
   }
 
   return { orders, revenue, partial };
