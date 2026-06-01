@@ -97,6 +97,56 @@ export default function Analytics() {
   // hour-of-day noise. 10m / 1h are still reachable via URL for smoke tests.
   const compareMinutes = parseInt(searchParams.get("compare") || "1440", 10);
 
+  // Category-level filter. All categories visible by default; user toggles
+  // individual chips off. Stored client-side — not in URL, since it's quick
+  // exploration state and resetting on reload is fine.
+  const ALL_CATEGORIES = ["theme", "products", "orders", "collections", "manual"];
+  const [enabledCategories, setEnabledCategories] = useState(new Set(ALL_CATEGORIES));
+  // Quick time filter inside the loaded data range. "all" means no extra filter.
+  const [timeFilter, setTimeFilter] = useState("all");
+  // Free-text search over Change.summary.
+  const [searchText, setSearchText] = useState("");
+
+  const toggleCategory = (cat) => {
+    setEnabledCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
+
+  const categoryOfType = (type) => {
+    if (!type) return "manual";
+    if (type.startsWith("theme")) return "theme";
+    if (type.startsWith("products")) return "products";
+    if (type.startsWith("orders")) return "orders";
+    if (type.startsWith("collections")) return "collections";
+    return "manual";
+  };
+
+  const isInTimeFilter = (eventDate) => {
+    if (timeFilter === "all") return true;
+    const now = Date.now();
+    const t = eventDate.getTime();
+    if (timeFilter === "1h") return t >= now - 60 * 60 * 1000;
+    if (timeFilter === "6h") return t >= now - 6 * 60 * 60 * 1000;
+    if (timeFilter === "today") {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      return t >= startOfToday.getTime();
+    }
+    return true;
+  };
+
+  const trimmedSearch = searchText.trim().toLowerCase();
+  const filteredEvents = events.filter((e) => {
+    if (!enabledCategories.has(categoryOfType(e.type))) return false;
+    if (!isInTimeFilter(new Date(e.occurredAt))) return false;
+    if (trimmedSearch && !(e.summary || "").toLowerCase().includes(trimmedSearch)) return false;
+    return true;
+  });
+
   const selectedEvent = events.find((e) => e.id === selectedEventId);
 
   const handleBackfill = () => {
@@ -336,7 +386,64 @@ export default function Analytics() {
       </s-section>
 
       <s-section id="events-section" heading="Events">
-        {events.length === 0 ? (
+        <s-box
+          id="events-filters"
+          padding="base"
+          background="base"
+          borderWidth="base"
+          borderColor="base"
+          borderRadius="base"
+        >
+          <s-stack id="events-filters-stack" gap="small">
+            <s-stack id="category-filters" direction="inline" gap="small" alignItems="center">
+              <s-text type="strong">Type:</s-text>
+              {ALL_CATEGORIES.map((cat) => (
+                <s-button
+                  key={`cat-${cat}`}
+                  variant={enabledCategories.has(cat) ? "primary" : "secondary"}
+                  onClick={() => toggleCategory(cat)}
+                >
+                  {cat[0].toUpperCase() + cat.slice(1)}
+                </s-button>
+              ))}
+            </s-stack>
+
+            <s-stack id="time-filters" direction="inline" gap="small" alignItems="center">
+              <s-text type="strong">When:</s-text>
+              {[
+                { value: "all", label: "All loaded" },
+                { value: "1h", label: "Last 1h" },
+                { value: "6h", label: "Last 6h" },
+                { value: "today", label: "Today" },
+              ].map((opt) => (
+                <s-button
+                  key={`time-${opt.value}`}
+                  variant={timeFilter === opt.value ? "primary" : "secondary"}
+                  onClick={() => setTimeFilter(opt.value)}
+                >
+                  {opt.label}
+                </s-button>
+              ))}
+            </s-stack>
+
+            <s-text-field
+              id="events-search"
+              label="Search summary"
+              value={searchText}
+              onInput={(e) => setSearchText(e.currentTarget.value)}
+              placeholder="e.g. price, theme, snowboard…"
+            />
+
+            <s-text color="subdued" type="subdued">
+              Showing {filteredEvents.length} of {events.length} events.
+              {trimmedSearch || timeFilter !== "all" || enabledCategories.size < ALL_CATEGORIES.length
+                ? " Filters active."
+                : ""}
+            </s-text>
+          </s-stack>
+        </s-box>
+
+        {filteredEvents.length === 0 ? (
           <s-box
             id="empty-events"
             padding="large"
@@ -346,12 +453,14 @@ export default function Analytics() {
             borderRadius="base"
           >
             <s-text alignment="center" color="subdued">
-              No events in this range.
+              {events.length === 0
+                ? "No events in this range."
+                : "No events match the current filters. Loosen them above."}
             </s-text>
           </s-box>
         ) : (
           <s-stack id="events-list" gap="small">
-            {events.map((event) => {
+            {filteredEvents.map((event) => {
               const isSelected = selectedEventId === event.id;
               const eventObservedChangeData = isSelected ? calculateObservedChange(event) : null;
               const eventObservedChange = eventObservedChangeData ? {
