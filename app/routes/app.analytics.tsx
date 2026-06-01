@@ -184,6 +184,27 @@ export default function Analytics() {
     }
   }, [fetcher.state, fetcher.data, revalidator]);
 
+  // Rolling baseline: fetched lazily for the currently selected event.
+  // Re-fetches when the user picks a different event or changes the
+  // comparison window.
+  const baselineFetcher = useFetcher();
+
+  useEffect(() => {
+    if (!selectedEventId) return;
+    const ev = events.find((e) => e.id === selectedEventId);
+    if (!ev) return;
+    const params = new URLSearchParams({
+      eventTime: new Date(ev.occurredAt).toISOString(),
+      windowMinutes: compareMinutes.toString(),
+      lookbackWeeks: "4",
+    });
+    baselineFetcher.load(`/api/baseline?${params.toString()}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEventId, compareMinutes]);
+
+  const baselineData =
+    baselineFetcher.data && !baselineFetcher.data.error ? baselineFetcher.data : null;
+
   const handleMinutesChange = (newMinutes) => {
     const newParams = new URLSearchParams(searchParams);
     newParams.set("minutes", newMinutes.toString());
@@ -587,6 +608,79 @@ export default function Analytics() {
                                 </s-stack>
                               </s-stack>
                             </s-box>
+
+                            {/* Rolling baseline panel — only rendered for the currently selected event */}
+                            {isSelected && (
+                              <s-box
+                                id={`baseline-box-${event.id}`}
+                                padding="base"
+                                background="base"
+                                borderWidth="base"
+                                borderColor="base"
+                                borderRadius="base"
+                              >
+                                <s-stack id={`baseline-stack-${event.id}`} gap="small">
+                                  <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                                    <s-text type="strong">Rolling baseline (same slot, last 4 weeks)</s-text>
+                                    {baselineFetcher.state !== "idle" ? (
+                                      <s-badge tone="info">Loading…</s-badge>
+                                    ) : baselineData ? (
+                                      <s-badge tone={baselineData.baseline.weeksWithData >= 3 ? "success" : baselineData.baseline.weeksWithData >= 1 ? "attention" : "warning"}>
+                                        {baselineData.baseline.weeksWithData}/{baselineData.baseline.totalWeeks} weeks of history
+                                      </s-badge>
+                                    ) : (
+                                      <s-badge tone="warning">No baseline yet</s-badge>
+                                    )}
+                                  </s-stack>
+
+                                  {baselineFetcher.state === "idle" && baselineData && baselineData.baseline.weeksWithData === 0 && (
+                                    <s-text color="subdued" type="subdued">
+                                      No buckets in the same time-of-day × day-of-week slot over the last 4 weeks.
+                                      Baseline will improve as the app accumulates history (or once you backfill further back).
+                                    </s-text>
+                                  )}
+
+                                  {baselineFetcher.state === "idle" && baselineData && baselineData.baseline.weeksWithData > 0 && (
+                                    <s-stack gap="small">
+                                      <s-stack direction="inline" justifyContent="space-between">
+                                        <s-text type="strong">Revenue</s-text>
+                                        <s-text>Actual: ${baselineData.actual.actualRevenue.toFixed(2)}</s-text>
+                                        <s-text>Expected: ${baselineData.baseline.expectedRevenue.toFixed(2)}</s-text>
+                                        <s-text type="strong">
+                                          {baselineData.deltaPct.revenue !== null
+                                            ? `Δ ${baselineData.deltaPct.revenue >= 0 ? "+" : ""}${baselineData.deltaPct.revenue.toFixed(1)}%`
+                                            : "Δ n/a"}
+                                        </s-text>
+                                      </s-stack>
+                                      <s-stack direction="inline" justifyContent="space-between">
+                                        <s-text type="strong">Orders</s-text>
+                                        <s-text>Actual: {baselineData.actual.actualOrders}</s-text>
+                                        <s-text>Expected: {baselineData.baseline.expectedOrders.toFixed(1)}</s-text>
+                                        <s-text type="strong">
+                                          {baselineData.deltaPct.orders !== null
+                                            ? `Δ ${baselineData.deltaPct.orders >= 0 ? "+" : ""}${baselineData.deltaPct.orders.toFixed(1)}%`
+                                            : "Δ n/a"}
+                                        </s-text>
+                                      </s-stack>
+                                      <s-stack direction="inline" justifyContent="space-between">
+                                        <s-text type="strong">AOV</s-text>
+                                        <s-text>Actual: {baselineData.actual.actualAOV !== null ? `$${baselineData.actual.actualAOV.toFixed(2)}` : "n/a"}</s-text>
+                                        <s-text>Expected: {baselineData.baseline.expectedAOV !== null ? `$${baselineData.baseline.expectedAOV.toFixed(2)}` : "n/a"}</s-text>
+                                        <s-text type="strong">
+                                          {baselineData.deltaPct.aov !== null
+                                            ? `Δ ${baselineData.deltaPct.aov >= 0 ? "+" : ""}${baselineData.deltaPct.aov.toFixed(1)}%`
+                                            : "Δ n/a"}
+                                        </s-text>
+                                      </s-stack>
+                                      <s-text color="subdued" type="subdued">
+                                        Expected = average of the same wall-clock window across the prior {baselineData.baseline.weeksWithData} weeks.
+                                        Smooths out hour-of-day and day-of-week seasonality.
+                                      </s-text>
+                                    </s-stack>
+                                  )}
+                                </s-stack>
+                              </s-box>
+                            )}
 
                             {eventObservedChange.recommendation && (
                               <s-box
