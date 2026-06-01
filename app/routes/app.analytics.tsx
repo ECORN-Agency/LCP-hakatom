@@ -107,6 +107,9 @@ export default function Analytics() {
   // Free-text search over Change.summary.
   const [searchText, setSearchText] = useState("");
 
+  // Multi-select chips: each category toggles independently. The "All" button
+  // acts as a reset — clicking it switches everything back on. Default state
+  // has all categories enabled.
   const toggleCategory = (cat) => {
     setEnabledCategories((prev) => {
       const next = new Set(prev);
@@ -115,6 +118,10 @@ export default function Analytics() {
       return next;
     });
   };
+
+  const selectAllCategories = () => setEnabledCategories(new Set(ALL_CATEGORIES));
+
+  const isAllCategoriesSelected = enabledCategories.size === ALL_CATEGORIES.length;
 
   const categoryOfType = (type) => {
     if (!type) return "manual";
@@ -397,6 +404,13 @@ export default function Analytics() {
           <s-stack id="events-filters-stack" gap="small">
             <s-stack id="category-filters" direction="inline" gap="small" alignItems="center">
               <s-text type="strong">Type:</s-text>
+              <s-button
+                key="cat-all"
+                variant={isAllCategoriesSelected ? "primary" : "secondary"}
+                onClick={selectAllCategories}
+              >
+                All
+              </s-button>
               {ALL_CATEGORIES.map((cat) => (
                 <s-button
                   key={`cat-${cat}`}
@@ -436,7 +450,7 @@ export default function Analytics() {
 
             <s-text color="subdued" type="subdued">
               Showing {filteredEvents.length} of {events.length} events.
-              {trimmedSearch || timeFilter !== "all" || enabledCategories.size < ALL_CATEGORIES.length
+              {trimmedSearch || timeFilter !== "all" || !isAllCategoriesSelected
                 ? " Filters active."
                 : ""}
             </s-text>
