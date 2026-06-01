@@ -51,6 +51,24 @@ model Change {
   @@index([shop, occurredAt])
 }
 
+// Latest known state of a product per shop. Used to compute diffs between
+// successive Shopify products/update webhooks (Shopify sends full state, not
+// a diff — and often sends multiple webhooks for a single merchant edit).
+//
+// Upsert per (shop, productId) on every products/* webhook; delete on
+// products/delete. Snapshot stores the fields we actually diff against —
+// trim the JSON, don't dump the whole payload.
+model ProductSnapshot {
+  id        String   @id @default(cuid())
+  shop      String
+  productId String
+  snapshot  Json
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([shop, productId])
+  @@index([shop, updatedAt])
+}
+
 model MetricBucket {
   id            String   @id @default(cuid())
   shop          String

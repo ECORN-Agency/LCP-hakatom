@@ -1,46 +1,11 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { logger } from "../logger.server";
-
-const getChangeSummary = (topic, payload) => {
-  const topicLower = topic.toLowerCase();
-  const summaries = {
-    "products/create": (p) => `Product created: ${p.title || p.id || "Unknown"}`,
-    "products/update": (p) => {
-      // Check if price changed in variants
-      const variants = p.variants || p.variant || [];
-      if (variants.length > 0) {
-        const priceChanges = variants
-          .filter(v => v.old_price && v.price && v.old_price !== v.price)
-          .map(v => `${v.title || "Default"}: $${v.old_price} → $${v.price}`);
-        
-        if (priceChanges.length > 0) {
-          return `Product updated: ${p.title || p.id || "Unknown"} - Price changes: ${priceChanges.join(", ")}`;
-        }
-      }
-      return `Product updated: ${p.title || p.id || "Unknown"}`;
-    },
-    "products/delete": (p) => `Product deleted: ${p.title || p.id || "Unknown"}`,
-    "products_create": (p) => `Product created: ${p.title || p.id || "Unknown"}`,
-    "products_update": (p) => {
-      const variants = p.variants || p.variant || [];
-      if (variants.length > 0) {
-        const priceChanges = variants
-          .filter(v => v.old_price && v.price && v.old_price !== v.price)
-          .map(v => `${v.title || "Default"}: $${v.old_price} → $${v.price}`);
-        
-        if (priceChanges.length > 0) {
-          return `Product updated: ${p.title || p.id || "Unknown"} - Price changes: ${priceChanges.join(", ")}`;
-        }
-      }
-      return `Product updated: ${p.title || p.id || "Unknown"}`;
-    },
-    "products_delete": (p) => `Product deleted: ${p.title || p.id || "Unknown"}`,
-  };
-
-  const getSummary = summaries[topicLower] || summaries[topic];
-  return getSummary ? getSummary(payload) : `Product ${topicLower.includes("create") ? "created" : topicLower.includes("delete") ? "deleted" : "updated"}: ${payload?.title || payload?.id || "Unknown"}`;
-};
+import {
+  snapshotFromPayload,
+  diffSnapshots,
+  summarizeDiff,
+} from "../models/productDiff.server";
 
 export const action = async ({ request }) => {
   let log = logger.child({ route: "webhooks.products" });
@@ -50,7 +15,7 @@ export const action = async ({ request }) => {
     const { topic, shop, payload } = await authenticate.webhook(request);
     log = log.child({ shop, topic, webhookId });
 
-    // Idempotency: if we've already processed this delivery, ack and bail.
+    // 1) Idempotency — same delivery retried.
     if (webhookId) {
       const existing = await prisma.change.findUnique({ where: { webhookId } });
       if (existing) {
@@ -60,92 +25,134 @@ export const action = async ({ request }) => {
     }
 
     const changeType = topic.replace(/\//g, "_").toLowerCase();
-    const summary = getChangeSummary(topic, payload);
     const entityId = payload?.id ? String(payload.id) : null;
+    const productTitle = payload?.title || payload?.name || "Unknown Product";
 
-    // Extract change details for products/update
-    let changeDetails = null;
-    const topicLower = topic.toLowerCase();
-    if (topicLower === "products/update" || topicLower === "products_update") {
-      const productTitle = payload?.title || payload?.name || "Unknown Product";
-      const variants = payload?.variants || payload?.variant || [];
-      
-      log.info({
-        productTitle,
-        entityId,
-        variantsCount: variants.length,
-        payloadKeys: Object.keys(payload || {}),
-      }, "products/update received");
-      
-      // Try to extract price changes from variants
-      // Note: Shopify webhook may not include old_price, so we check multiple possible fields
-      const priceChanges = variants
-        .filter(v => {
-          // Check if price changed (old_price field exists) or if we have both old and new values
-          const oldPrice = v.old_price || v.previous_price || v.previous_value?.price;
-          const newPrice = v.price || v.new_price || v.current_value?.price;
-          return oldPrice && newPrice && oldPrice !== newPrice;
-        })
-        .map(v => ({
-          variantTitle: v.title || "Default",
-          oldPrice: v.old_price || v.previous_price || v.previous_value?.price,
-          newPrice: v.price || v.new_price || v.current_value?.price,
-          variantId: v.id ? String(v.id) : null,
-        }));
-
-      // Always create changeDetails for products/update
-      changeDetails = {
-        productTitle: productTitle,
-        productId: entityId,
-        field: priceChanges.length > 0 ? "price" : "product",
-      };
-
-      if (priceChanges.length > 0) {
-        changeDetails.priceChanges = priceChanges;
-        log.info({ entityId, priceChanges }, "price changes detected");
-      } else {
-        // Store current variant info for reference
-        // Even if we don't know what changed, we know the product was updated
-        changeDetails.variants = variants.map(v => ({
-          variantTitle: v.title || "Default",
-          price: v.price,
-          variantId: v.id ? String(v.id) : null,
-        }));
-        log.debug({ changeDetails }, "product updated without detectable price change");
+    // 2) products/delete — kill the snapshot and log the deletion.
+    if (changeType === "products_delete") {
+      if (entityId) {
+        await prisma.productSnapshot
+          .delete({ where: { shop_productId: { shop, productId: entityId } } })
+          .catch(() => {
+            // No snapshot existed — fine, log at debug and continue.
+            log.debug({ entityId }, "no snapshot to delete");
+          });
       }
+      await prisma.change.create({
+        data: {
+          webhookId,
+          shop,
+          type: changeType,
+          entityType: "product",
+          entityId,
+          summary: `Product deleted: ${productTitle}`,
+          payload,
+          occurredAt: new Date(),
+        },
+      });
+      log.info({ entityId, type: changeType }, "product deleted, change created");
+      return new Response(null, { status: 200 });
     }
 
-    // Prepare payload with changeDetails
-    const payloadWithDetails = changeDetails 
-      ? { ...payload, changeDetails }
-      : payload;
+    // 3) products/create — establish the snapshot, log a creation Change.
+    if (changeType === "products_create") {
+      if (entityId) {
+        const snapshot = snapshotFromPayload(payload);
+        await prisma.productSnapshot.upsert({
+          where: { shop_productId: { shop, productId: entityId } },
+          create: { shop, productId: entityId, snapshot },
+          update: { snapshot },
+        });
+      }
+      await prisma.change.create({
+        data: {
+          webhookId,
+          shop,
+          type: changeType,
+          entityType: "product",
+          entityId,
+          summary: `Product created: ${productTitle}`,
+          payload,
+          occurredAt: new Date(),
+        },
+      });
+      log.info({ entityId, type: changeType }, "product created, snapshot stored");
+      return new Response(null, { status: 200 });
+    }
 
-    const entityType = changeType.includes("product") ? "product" : changeType.includes("variant") ? "variant" : null;
-    
-    await prisma.change.create({
-      data: {
-        webhookId,
-        shop: shop,
-        type: changeType,
-        entityType: entityType,
-        entityId: entityId,
-        summary: summary,
-        payload: payloadWithDetails,
-        occurredAt: new Date(),
-      },
-    });
-    
-    log.info({
-      type: changeType,
-      entityId,
-      summary,
-      hasChangeDetails: !!changeDetails,
-    }, "change created");
+    // 4) products/update — diff against last snapshot.
+    if (changeType === "products_update" && entityId) {
+      const stored = await prisma.productSnapshot.findUnique({
+        where: { shop_productId: { shop, productId: entityId } },
+      });
 
+      const nextSnapshot = snapshotFromPayload(payload);
+      const prevSnapshot = stored?.snapshot ?? null;
+      const diff = diffSnapshots(prevSnapshot, nextSnapshot);
+
+      // Always refresh the snapshot — even if diff is empty, the latest state
+      // is still authoritative for the next webhook.
+      await prisma.productSnapshot.upsert({
+        where: { shop_productId: { shop, productId: entityId } },
+        create: { shop, productId: entityId, snapshot: nextSnapshot },
+        update: { snapshot: nextSnapshot },
+      });
+
+      // First time we see this product — store snapshot, but DON'T create a
+      // Change row. Shopify retries product webhooks on app install with the
+      // full state — that's not a "real" merchant edit.
+      if (!stored) {
+        log.info({ entityId }, "first observation of product, snapshot stored, change suppressed");
+        return new Response(null, { status: 200 });
+      }
+
+      // No actual change — a duplicate / ghost update (Shopify fires several
+      // identical products/update webhooks for one merchant edit).
+      if (!diff.hasChanges) {
+        log.info({ entityId }, "products/update with no diff, suppressed");
+        return new Response(null, { status: 200 });
+      }
+
+      // Real change — write a rich Change row.
+      const summary = summarizeDiff(productTitle, diff);
+      const payloadWithDetails = {
+        ...payload,
+        changeDetails: {
+          productTitle,
+          productId: entityId,
+          ...diff,
+        },
+      };
+
+      await prisma.change.create({
+        data: {
+          webhookId,
+          shop,
+          type: changeType,
+          entityType: "product",
+          entityId,
+          summary,
+          payload: payloadWithDetails,
+          occurredAt: new Date(),
+        },
+      });
+
+      log.info({
+        entityId,
+        summary,
+        hasTitle: !!diff.titleChange,
+        hasStatus: !!diff.statusChange,
+        priceChangesCount: diff.priceChanges?.length ?? 0,
+        inventoryChangesCount: diff.inventoryChanges?.length ?? 0,
+      }, "product diff captured, change created");
+      return new Response(null, { status: 200 });
+    }
+
+    // 5) Fallback — unknown topic that hit this handler.
+    log.warn({ topic }, "unhandled products topic, ignoring");
     return new Response(null, { status: 200 });
   } catch (error) {
     log.error({ err: error }, "products webhook failed");
     return new Response(null, { status: 200 });
   }
 };
-
