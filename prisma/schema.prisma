@@ -51,6 +51,50 @@ model Change {
   @@index([shop, occurredAt])
 }
 
+// User-configured alert rules. The cron worker evaluates recent Change rows
+// against each enabled rule and dispatches a notification through `channel`.
+//
+// minLabel    — match threshold: "negative" or "strong_negative" (or "any").
+// minConfidence — match threshold: "low" / "medium" / "high".
+//   evaluation passes when the computed rec's strength >= minLabel AND
+//   confidence >= minConfidence.
+//
+// evaluationDelayMin — wait this many minutes after the event before computing
+// the recommendation, so the after-window has data to look at.
+model AlertRule {
+  id                 String   @id @default(cuid())
+  shop               String
+  channel            String   @default("email")  // "email" | "slack" (slack TBD)
+  destination        String                       // email address or webhook URL
+  minLabel           String   @default("strong_negative")
+  minConfidence      String   @default("medium")
+  enabled            Boolean  @default(true)
+  evaluationDelayMin Int      @default(30)
+  windowMinutes      Int      @default(1440)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([shop, enabled])
+}
+
+// One row per (rule, change) that fired. Guarantees we never send the same
+// alert twice for the same event, and lets us audit what was delivered.
+model AlertDelivery {
+  id             String   @id @default(cuid())
+  ruleId         String
+  shop           String
+  changeId       String
+  recommendation Json
+  channel        String
+  destination    String
+  status         String   // "sent" | "failed" | "skipped"
+  errorMessage   String?
+  deliveredAt    DateTime @default(now())
+
+  @@unique([ruleId, changeId])
+  @@index([shop, deliveredAt])
+}
+
 // Latest known state of a product per shop. Used to compute diffs between
 // successive Shopify products/update webhooks (Shopify sends full state, not
 // a diff — and often sends multiple webhooks for a single merchant edit).
