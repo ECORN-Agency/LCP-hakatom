@@ -327,7 +327,10 @@ export default function Analytics() {
                     {isSelected && eventObservedChange && (
                       <s-stack id={`observed-change-${event.id}`} gap="base">
                         {eventObservedChange.waiting ? (
-                          <s-text color="subdued">{eventObservedChange.message}</s-text>
+                          <s-stack id={`waiting-state-${event.id}`} direction="inline" gap="small" alignItems="center">
+                            <s-badge tone="info">Waiting for data</s-badge>
+                            <s-text color="subdued">{eventObservedChange.message}</s-text>
+                          </s-stack>
                         ) : (
                           <>
                             <s-text>
