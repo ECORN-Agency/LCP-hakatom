@@ -98,16 +98,36 @@ export const action = async ({ request }) => {
         update: { snapshot: nextSnapshot },
       });
 
-      // First time we see this product — store snapshot, but DON'T create a
-      // Change row. Shopify retries product webhooks on app install with the
-      // full state — that's not a "real" merchant edit.
+      // First time we see this product — we have no baseline so we can't
+      // compute a rich diff, but we still log a generic Change so the merchant
+      // sees that something happened. Subsequent updates will diff against
+      // the snapshot we just stored.
       if (!stored) {
-        log.info({ entityId }, "first observation of product, snapshot stored, change suppressed");
+        await prisma.change.create({
+          data: {
+            webhookId,
+            shop,
+            type: changeType,
+            entityType: "product",
+            entityId,
+            summary: `Product updated: ${productTitle}`,
+            payload: {
+              ...payload,
+              changeDetails: {
+                productTitle,
+                productId: entityId,
+                firstObservation: true,
+              },
+            },
+            occurredAt: new Date(),
+          },
+        });
+        log.info({ entityId }, "first observation of product, generic change created");
         return new Response(null, { status: 200 });
       }
 
-      // No actual change — a duplicate / ghost update (Shopify fires several
-      // identical products/update webhooks for one merchant edit).
+      // Snapshot exists but diff is empty — Shopify fired an identical
+      // products/update webhook for one merchant edit. Suppress.
       if (!diff.hasChanges) {
         log.info({ entityId }, "products/update with no diff, suppressed");
         return new Response(null, { status: 200 });
