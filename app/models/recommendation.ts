@@ -9,6 +9,9 @@ export function buildRecommendation({
   //   priceDirection: "up" | "down" | "mixed" — for products_update events
   //                   where the caller has computed the dominant variant direction.
   eventContext = {},
+  // Size of the comparison window in minutes (10, 60, 360, 1440, ...).
+  // Drivers will be labelled with the appropriate human unit.
+  windowMinutes = 10,
   revenueDeltaPct,
   ordersDeltaPct,
   aovDeltaPct,
@@ -131,6 +134,7 @@ export function buildRecommendation({
     expectedBuckets,
     partialData,
     overlappingEvents,
+    windowMinutes,
   });
 
   return {
@@ -241,6 +245,18 @@ function getRecommendationText(eventType, label, strength, eventContext = {}) {
   return `Early signal: ${text}`;
 }
 
+export function formatWindowLabel(minutes) {
+  if (minutes >= 1440) {
+    const days = minutes / 1440;
+    return Number.isInteger(days) ? `${days}d window` : `${days.toFixed(1)}d window`;
+  }
+  if (minutes >= 60) {
+    const hours = minutes / 60;
+    return Number.isInteger(hours) ? `${hours}h window` : `${hours.toFixed(1)}h window`;
+  }
+  return `${minutes}m window`;
+}
+
 function buildDrivers({
   revenueDeltaPct,
   ordersDeltaPct,
@@ -250,17 +266,19 @@ function buildDrivers({
   expectedBuckets,
   partialData,
   overlappingEvents,
+  windowMinutes,
 }) {
   const drivers = [];
+  const windowLabel = formatWindowLabel(windowMinutes);
 
   if (revenueDeltaPct !== null) {
-    drivers.push(`Revenue Δ: ${revenueDeltaPct >= 0 ? "+" : ""}${revenueDeltaPct.toFixed(1)}% (10m window)`);
+    drivers.push(`Revenue Δ: ${revenueDeltaPct >= 0 ? "+" : ""}${revenueDeltaPct.toFixed(1)}% (${windowLabel})`);
   } else {
     drivers.push("Revenue Δ: n/a (baseline=0)");
   }
 
   if (ordersDeltaPct !== null) {
-    drivers.push(`Orders Δ: ${ordersDeltaPct >= 0 ? "+" : ""}${ordersDeltaPct.toFixed(1)}% (10m window)`);
+    drivers.push(`Orders Δ: ${ordersDeltaPct >= 0 ? "+" : ""}${ordersDeltaPct.toFixed(1)}% (${windowLabel})`);
   } else {
     drivers.push("Orders Δ: n/a (baseline=0)");
   }
@@ -269,14 +287,14 @@ function buildDrivers({
     drivers.push(`AOV Δ: ${aovDeltaPct >= 0 ? "+" : ""}${aovDeltaPct.toFixed(1)}%`);
   }
 
-  drivers.push(`Data coverage: before ${coverageBefore}/${expectedBuckets}, after ${coverageAfter}/${expectedBuckets}`);
+  drivers.push(`Data coverage: before ${coverageBefore}/${expectedBuckets}, after ${coverageAfter}/${expectedBuckets} buckets`);
 
   if (overlappingEvents > 0) {
     drivers.push(`Overlapping events: ${overlappingEvents}`);
   }
 
   if (partialData) {
-    drivers.push("Partial data: pagination limit");
+    drivers.push("Partial data: backfill cap hit on at least one bucket");
   }
 
   return drivers;

@@ -10,7 +10,9 @@ import { buildRecommendation } from "../models/recommendation";
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const minutes = parseInt(url.searchParams.get("minutes") || "120", 10);
+  // Default data range is 24h — covers a 24h symmetric comparison window
+  // for any event that happened in the last day.
+  const minutes = parseInt(url.searchParams.get("minutes") || "1440", 10);
 
   const nowUTC = new Date();
   const fromUTC = new Date(nowUTC.getTime() - minutes * 60 * 1000);
@@ -89,6 +91,12 @@ export default function Analytics() {
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [anyPartial, setAnyPartial] = useState(false);
 
+  // Comparison window (per-event before/after width) is independent of the
+  // data-range loader param. Persisted in the URL as ?compare=<minutes>.
+  // Default 24h — first window where the signal stops being dominated by
+  // hour-of-day noise. 10m / 1h are still reachable via URL for smoke tests.
+  const compareMinutes = parseInt(searchParams.get("compare") || "1440", 10);
+
   const selectedEvent = events.find((e) => e.id === selectedEventId);
 
   const handleBackfill = () => {
@@ -96,6 +104,18 @@ export default function Analytics() {
       { intent: "backfill", minutes: minutes.toString() },
       { method: "POST" }
     );
+  };
+
+  const handleCompareChange = (newCompare) => {
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set("compare", newCompare.toString());
+    setSearchParams(newParams);
+  };
+
+  const formatRangeLabel = (mins) => {
+    if (mins >= 1440) return `${mins / 1440}d`;
+    if (mins >= 60) return `${mins / 60}h`;
+    return `${mins}m`;
   };
 
   useEffect(() => {
@@ -150,7 +170,8 @@ export default function Analytics() {
   const calculateObservedChange = (event) => {
     if (!event) return null;
 
-    const W = 10;
+    // Use the URL-controlled comparison window (minutes), not a hardcoded 10.
+    const W = compareMinutes;
     const eventTime = new Date(event.occurredAt);
     const beforeStart = new Date(eventTime.getTime() - W * 60 * 1000);
     const afterEnd = new Date(eventTime.getTime() + W * 60 * 1000);
@@ -164,7 +185,9 @@ export default function Analytics() {
       return bucketAt >= eventTime && bucketAt <= afterEnd;
     });
 
-    const expectedBuckets = W / 10;
+    // Each MetricBucket spans 10 minutes; expectedBuckets is the count we'd
+    // see if the entire window were covered.
+    const expectedBuckets = Math.max(1, Math.round(W / 10));
 
     if (afterBuckets.length === 0) {
       return { waiting: true, message: "No metrics available. Click 'Backfill' to collect metrics for this time window." };
@@ -225,6 +248,7 @@ export default function Analytics() {
     recommendation: observedChangeData.waiting ? null : buildRecommendation({
       eventType: selectedEvent.type,
       eventContext: extractEventContext(selectedEvent),
+      windowMinutes: compareMinutes,
       revenueDeltaPct: observedChangeData.revenueDeltaPct,
       ordersDeltaPct: observedChangeData.ordersDeltaPct,
       aovDeltaPct: observedChangeData.aovDeltaPct,
@@ -248,39 +272,64 @@ export default function Analytics() {
           borderRadius="base"
         >
           <s-stack id="controls-stack" gap="base">
-            <s-stack id="range-selector" direction="inline" gap="small">
-              <s-button
-                variant={minutes === 60 ? "primary" : "secondary"}
-                onClick={() => handleMinutesChange(60)}
-              >
-                60 min
-              </s-button>
-              <s-button
-                variant={minutes === 120 ? "primary" : "secondary"}
-                onClick={() => handleMinutesChange(120)}
-              >
-                120 min
-              </s-button>
-              <s-button
-                variant={minutes === 240 ? "primary" : "secondary"}
-                onClick={() => handleMinutesChange(240)}
-              >
-                240 min
-              </s-button>
+            <s-stack id="range-row" gap="small">
+              <s-text type="strong">Data range (events + metrics shown):</s-text>
+              <s-stack id="range-selector" direction="inline" gap="small">
+                {[360, 1440, 10080].map((mins) => (
+                  <s-button
+                    key={`range-${mins}`}
+                    variant={minutes === mins ? "primary" : "secondary"}
+                    onClick={() => handleMinutesChange(mins)}
+                  >
+                    {formatRangeLabel(mins)}
+                  </s-button>
+                ))}
+              </s-stack>
             </s-stack>
+
+            <s-stack id="compare-row" gap="small">
+              <s-text type="strong">Comparison window (before / after each event):</s-text>
+              <s-stack id="compare-selector" direction="inline" gap="small">
+                {[60, 360, 1440, 10080].map((mins) => (
+                  <s-button
+                    key={`compare-${mins}`}
+                    variant={compareMinutes === mins ? "primary" : "secondary"}
+                    onClick={() => handleCompareChange(mins)}
+                  >
+                    {formatRangeLabel(mins)}
+                  </s-button>
+                ))}
+              </s-stack>
+              <s-text color="subdued" type="subdued">
+                24h is the recommended default — smooths hour-of-day noise. Pick 7d
+                for stores with low daily traffic (smooths day-of-week patterns too).
+              </s-text>
+              {compareMinutes >= 10080 && (
+                <s-badge tone="warning">
+                  7d backfill may hit a Vercel function timeout — coming fix in Phase 2.3
+                </s-badge>
+              )}
+              {compareMinutes * 2 > minutes && (
+                <s-text color="subdued" type="subdued">
+                  Heads up: comparison window is wider than the data range, so coverage
+                  will be capped. Bump the data range above for a fairer comparison.
+                </s-text>
+              )}
+            </s-stack>
+
             <s-button
               id="backfill-button"
               variant="primary"
               onClick={handleBackfill}
               loading={fetcher.state !== "idle"}
             >
-              Backfill last {minutes} minutes
+              Backfill last {formatRangeLabel(minutes)}
             </s-button>
             <s-text color="subdued" type="subdued">
-              MVP uses time-compressed windows; results are early signals (not causal proof).
+              Results are early signals, not causal proof. Wider windows = stronger signal but more chance of overlapping events.
             </s-text>
             {anyPartial && (
-              <s-badge tone="warning">Partial data (pagination not implemented in MVP)</s-badge>
+              <s-badge tone="warning">Partial data (at least one bucket hit the backfill cap)</s-badge>
             )}
           </s-stack>
         </s-box>
@@ -310,6 +359,7 @@ export default function Analytics() {
                 recommendation: eventObservedChangeData.waiting ? null : buildRecommendation({
                   eventType: event.type,
                   eventContext: extractEventContext(event),
+                  windowMinutes: compareMinutes,
                   revenueDeltaPct: eventObservedChangeData.revenueDeltaPct,
                   ordersDeltaPct: eventObservedChangeData.ordersDeltaPct,
                   aovDeltaPct: eventObservedChangeData.aovDeltaPct,
