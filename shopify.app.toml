@@ -2,7 +2,7 @@
 
 client_id = "fd0170d31baa10a8ad5265e1cf05d4b5"
 name = "LSP hakaton app"
-application_url = "https://example.com"
+application_url = "https://lcp-hakatom.vercel.app"
 embedded = true
 
 [build]
@@ -33,4 +33,9 @@ api_version = "2026-01"
 scopes = "read_analytics,read_channels,read_checkouts,read_content,read_customers,read_draft_orders,read_inventory,read_inventory_transfers,read_online_store_pages,read_order_edits,read_orders,read_product_feeds,read_product_listings,read_products,read_purchase_options,read_reports,read_themes"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://lcp-hakatom.vercel.app/auth/callback",
+  "https://lcp-hakatom.vercel.app/auth/shopify/callback",
+  "https://lcp-hakatom.vercel.app/api/auth/callback",
+  "https://lcp-hakatom.vercel.app/api/auth"
+]
