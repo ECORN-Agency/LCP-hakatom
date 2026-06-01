@@ -18,8 +18,19 @@ const getChangeSummary = (topic, payload) => {
 };
 
 export const action = async ({ request }) => {
+  // Read idempotency key BEFORE authenticate.webhook consumes the request body.
+  const webhookId = request.headers.get("X-Shopify-Webhook-Id");
   try {
     const { topic, shop, payload } = await authenticate.webhook(request);
+
+    // Idempotency: if we've already processed this delivery, ack and bail.
+    if (webhookId) {
+      const existing = await prisma.change.findUnique({ where: { webhookId } });
+      if (existing) {
+        logger.info({ webhookId, shop, topic, route: "webhooks.collections" }, "duplicate delivery, already processed");
+        return new Response(null, { status: 200 });
+      }
+    }
 
     const changeType = topic.replace(/\//g, "_").toLowerCase();
     const summary = getChangeSummary(topic, payload);
@@ -27,6 +38,7 @@ export const action = async ({ request }) => {
 
     await prisma.change.create({
       data: {
+        webhookId,
         shop: shop,
         type: changeType,
         entityType: "collection",

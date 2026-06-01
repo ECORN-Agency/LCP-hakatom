@@ -43,6 +43,9 @@ model Change {
   entityId   String?
   summary    String
   payload    Json?
+  // Shopify's X-Shopify-Webhook-Id header — unique per delivery attempt.
+  // We dedupe retries by this. Nullable for backfill / manual events / legacy rows.
+  webhookId  String?  @unique
   createdAt  DateTime @default(now())
 
   @@index([shop, occurredAt])

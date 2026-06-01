@@ -4,9 +4,20 @@ import { logger } from "../logger.server";
 
 export const action = async ({ request }) => {
   let log = logger.child({ route: "webhooks.themes" });
+  // Read idempotency key BEFORE authenticate.webhook consumes the request body.
+  const webhookId = request.headers.get("X-Shopify-Webhook-Id");
   try {
     const { topic, shop, payload } = await authenticate.webhook(request);
-    log = log.child({ shop, topic });
+    log = log.child({ shop, topic, webhookId });
+
+    // Idempotency: if we've already processed this delivery, ack and bail.
+    if (webhookId) {
+      const existing = await prisma.change.findUnique({ where: { webhookId } });
+      if (existing) {
+        log.info({ existingChangeId: existing.id }, "duplicate delivery, already processed");
+        return new Response(null, { status: 200 });
+      }
+    }
 
     log.info({ payloadKeys: Object.keys(payload || {}) }, "theme webhook received");
 
@@ -59,6 +70,7 @@ export const action = async ({ request }) => {
         if (previousThemeName !== themeName) {
           await prisma.change.create({
             data: {
+              webhookId,
               shop: shop,
               type: "theme_switched",
               entityType: "theme",
@@ -83,6 +95,7 @@ export const action = async ({ request }) => {
           log.debug({ themeId }, "theme matches previous live, treating as publish");
           await prisma.change.create({
             data: {
+              webhookId,
               shop: shop,
               type: "theme_published",
               entityType: "theme",
@@ -106,6 +119,7 @@ export const action = async ({ request }) => {
       } else {
         await prisma.change.create({
           data: {
+            webhookId,
             shop: shop,
             type: "theme_published",
             entityType: "theme",
@@ -190,6 +204,7 @@ export const action = async ({ request }) => {
       
       await prisma.change.create({
         data: {
+          webhookId,
           shop: shop,
           type: "theme_files_updated",
           entityType: "theme",
