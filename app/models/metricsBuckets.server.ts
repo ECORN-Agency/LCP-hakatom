@@ -60,7 +60,7 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO) {
 }
 
 export async function upsertBucketMetric(shop, bucketAtUTC, orders, revenue) {
-  await prisma.dailyMetric.upsert({
+  await prisma.metricBucket.upsert({
     where: {
       shop_bucketAt: {
         shop,
@@ -84,7 +84,7 @@ export async function getBucketMetrics(shop, fromISO, toISO) {
   const fromDate = new Date(fromISO);
   const toDate = new Date(toISO);
 
-  return await prisma.dailyMetric.findMany({
+  return await prisma.metricBucket.findMany({
     where: {
       shop,
       bucketAt: {

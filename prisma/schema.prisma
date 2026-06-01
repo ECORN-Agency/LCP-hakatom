@@ -48,14 +48,18 @@ model Change {
   @@index([shop, occurredAt])
 }
 
-model DailyMetric {
-  id        String   @id @default(cuid())
-  shop      String
-  bucketAt  DateTime
-  orders    Int
-  revenue   Float
-  createdAt DateTime @default(now())
+model MetricBucket {
+  id            String   @id @default(cuid())
+  shop          String
+  bucketAt      DateTime
+  bucketMinutes Int      @default(10)
+  orders        Int
+  revenue       Float
+  createdAt     DateTime @default(now())
 
   @@unique([shop, bucketAt])
   @@index([shop, bucketAt])
+  // Keep underlying DB table name to avoid data loss on existing prod data.
+  // Drop @@map and run a proper migration when ready to rename the actual table.
+  @@map("DailyMetric")
 }

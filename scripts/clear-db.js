@@ -7,12 +7,12 @@ async function clearDatabase() {
     console.log(`Deleted ${deletedChanges.count} changes`);
 
     try {
-      console.log("Clearing DailyMetric table...");
-      const deletedMetrics = await prisma.dailyMetric.deleteMany({});
+      console.log("Clearing MetricBucket table...");
+      const deletedMetrics = await prisma.metricBucket.deleteMany({});
       console.log(`Deleted ${deletedMetrics.count} metrics`);
     } catch (error) {
       if (error.code === "P2021") {
-        console.log("DailyMetric table does not exist yet, skipping...");
+        console.log("MetricBucket table does not exist yet, skipping...");
       } else {
         throw error;
       }
