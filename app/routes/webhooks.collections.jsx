@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { logger } from "../logger.server";
 
 const getChangeSummary = (topic, payload) => {
   const topicLower = topic.toLowerCase();
@@ -38,7 +39,7 @@ export const action = async ({ request }) => {
 
     return new Response(null, { status: 200 });
   } catch (error) {
-    console.error("Webhook error:", error);
+    logger.error({ err: error, route: "webhooks.collections" }, "collections webhook failed");
     return new Response(null, { status: 200 });
   }
 };

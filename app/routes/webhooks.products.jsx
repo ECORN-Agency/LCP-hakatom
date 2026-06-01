@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { logger } from "../logger.server";
 
 const getChangeSummary = (topic, payload) => {
   const topicLower = topic.toLowerCase();
@@ -42,8 +43,10 @@ const getChangeSummary = (topic, payload) => {
 };
 
 export const action = async ({ request }) => {
+  let log = logger.child({ route: "webhooks.products" });
   try {
     const { topic, shop, payload } = await authenticate.webhook(request);
+    log = log.child({ shop, topic });
 
     const changeType = topic.replace(/\//g, "_").toLowerCase();
     const summary = getChangeSummary(topic, payload);
@@ -56,12 +59,12 @@ export const action = async ({ request }) => {
       const productTitle = payload?.title || payload?.name || "Unknown Product";
       const variants = payload?.variants || payload?.variant || [];
       
-      console.log("Products/update webhook received:", {
+      log.info({
         productTitle,
         entityId,
         variantsCount: variants.length,
         payloadKeys: Object.keys(payload || {}),
-      });
+      }, "products/update received");
       
       // Try to extract price changes from variants
       // Note: Shopify webhook may not include old_price, so we check multiple possible fields
@@ -88,7 +91,7 @@ export const action = async ({ request }) => {
 
       if (priceChanges.length > 0) {
         changeDetails.priceChanges = priceChanges;
-        console.log("Price changes detected:", priceChanges);
+        log.info({ entityId, priceChanges }, "price changes detected");
       } else {
         // Store current variant info for reference
         // Even if we don't know what changed, we know the product was updated
@@ -97,7 +100,7 @@ export const action = async ({ request }) => {
           price: v.price,
           variantId: v.id ? String(v.id) : null,
         }));
-        console.log("Product updated (no price changes detected), storing product info:", changeDetails);
+        log.debug({ changeDetails }, "product updated without detectable price change");
       }
     }
 
@@ -120,16 +123,16 @@ export const action = async ({ request }) => {
       },
     });
     
-    console.log("Change created:", {
+    log.info({
       type: changeType,
+      entityId,
       summary,
       hasChangeDetails: !!changeDetails,
-      changeDetails,
-    });
+    }, "change created");
 
     return new Response(null, { status: 200 });
   } catch (error) {
-    console.error("Webhook error:", error);
+    log.error({ err: error }, "products webhook failed");
     return new Response(null, { status: 200 });
   }
 };

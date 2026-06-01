@@ -1,17 +1,20 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { logger } from "../logger.server";
 
 export const action = async ({ request }) => {
+  let log = logger.child({ route: "webhooks.themes" });
   try {
     const { topic, shop, payload } = await authenticate.webhook(request);
+    log = log.child({ shop, topic });
 
-    console.log("Theme webhook received:", { topic, shop, payloadKeys: Object.keys(payload || {}) });
+    log.info({ payloadKeys: Object.keys(payload || {}) }, "theme webhook received");
 
     const topicLower = topic.toLowerCase();
     const isMainTheme = payload?.role === "main" || payload?.role === "MAIN";
     
     if (!isMainTheme) {
-      console.log(`[SKIP] Skipping theme event for non-main theme: ${payload?.name || payload?.id}`);
+      log.debug({ themeName: payload?.name, themeId: payload?.id, role: payload?.role }, "skipped non-main theme event");
       return new Response(null, { status: 200 });
     }
 
@@ -33,7 +36,7 @@ export const action = async ({ request }) => {
       });
 
       if (anyRecentThemeEvent) {
-        console.log(`[DEDUPLICATION] Skipping theme_published for theme ${themeId} as ${anyRecentThemeEvent.type} was recently recorded.`);
+        log.info({ themeId, suppressedBy: anyRecentThemeEvent.type, windowMs: 60000 }, "deduplicated theme_published");
         return new Response(null, { status: 200 });
       }
       
@@ -75,9 +78,9 @@ export const action = async ({ request }) => {
             },
           });
           
-          console.log("Theme switched change created:", { themeName, themeId, previousThemeName });
+          log.info({ themeName, themeId, previousThemeName, type: "theme_switched" }, "change created");
         } else {
-          console.log(`[SKIP] Theme ${themeId} is the same as previous, treating as publish instead of switch.`);
+          log.debug({ themeId }, "theme matches previous live, treating as publish");
           await prisma.change.create({
             data: {
               shop: shop,
@@ -98,7 +101,7 @@ export const action = async ({ request }) => {
             },
           });
           
-          console.log("Theme published change created:", { themeName, themeId });
+          log.info({ themeName, themeId, type: "theme_published" }, "change created");
         }
       } else {
         await prisma.change.create({
@@ -121,7 +124,7 @@ export const action = async ({ request }) => {
           },
         });
         
-        console.log("Theme published change created:", { themeName, themeId });
+        log.info({ themeName, themeId, type: "theme_published" }, "change created");
       }
     } else if (topicLower === "themes/update" || topicLower === "themes_update") {
       const themeName = payload?.name || payload?.theme_name || payload?.id || "Unknown";
@@ -142,7 +145,7 @@ export const action = async ({ request }) => {
         });
 
         if (recentPublish) {
-          console.log(`[DEDUPLICATION] Skipping theme_updated (role: main) for theme ${themeId} as ${recentPublish.type} was recently recorded.`);
+          log.info({ themeId, suppressedBy: recentPublish.type, windowMs: 300000 }, "deduplicated theme_updated (role=main)");
           return new Response(null, { status: 200 });
         }
       }
@@ -160,7 +163,7 @@ export const action = async ({ request }) => {
       });
 
       if (recentEvent) {
-        console.log(`[DEDUPLICATION] Skipping theme_updated for theme ${themeId} as ${recentEvent.type} was recently recorded.`);
+        log.info({ themeId, suppressedBy: recentEvent.type, windowMs: 60000 }, "deduplicated theme_updated");
         return new Response(null, { status: 200 });
       }
       
@@ -205,12 +208,12 @@ export const action = async ({ request }) => {
         },
       });
       
-      console.log("Theme files updated change created:", { themeName, themeId, changes });
+      log.info({ themeName, themeId, changes, type: "theme_files_updated" }, "change created");
     }
 
     return new Response(null, { status: 200 });
   } catch (error) {
-    console.error("Theme webhook error:", error);
+    log.error({ err: error }, "theme webhook failed");
     return new Response(null, { status: 200 });
   }
 };

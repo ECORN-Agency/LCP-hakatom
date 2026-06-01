@@ -1,4 +1,5 @@
 import prisma from "../db.server";
+import { logger } from "../logger.server";
 
 export function normalizeTo10MinBucketUTC(date: Date): Date {
   const d = new Date(date);
@@ -121,7 +122,7 @@ export async function backfillLastNMinutes(admin, shop, minutes = 120) {
         anyPartial = true;
       }
     } catch (error) {
-      console.error(`Error backfilling bucket ${bucketStartISO}:`, error);
+      logger.error({ err: error, shop, bucketStart: bucketStartISO, bucketEnd: bucketEndISO }, "failed to backfill bucket");
     }
   }
 

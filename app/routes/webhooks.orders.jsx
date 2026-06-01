@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { logger } from "../logger.server";
 
 const getChangeSummary = (topic, payload) => {
   const topicLower = topic.toLowerCase();
@@ -15,10 +16,15 @@ const getChangeSummary = (topic, payload) => {
 };
 
 export const action = async ({ request }) => {
+  let log = logger.child({ route: "webhooks.orders" });
   try {
     const { topic, shop, payload } = await authenticate.webhook(request);
+    log = log.child({ shop, topic });
 
-    console.log("Order webhook received:", { topic, shop, orderNumber: payload?.order_number || payload?.id, payloadKeys: Object.keys(payload || {}) });
+    log.info({
+      orderNumber: payload?.order_number || payload?.id,
+      payloadKeys: Object.keys(payload || {}),
+    }, "order webhook received");
 
     const changeType = topic.replace(/\//g, "_").toLowerCase();
     const summary = getChangeSummary(topic, payload);
@@ -42,7 +48,7 @@ export const action = async ({ request }) => {
       });
 
       if (recentCreate) {
-        console.log(`[DEDUPLICATION] Skipping ${changeType} for order ${entityId} as orders_create was recently recorded.`);
+        log.info({ changeType, entityId, suppressedBy: "orders_create", windowMs: 10000 }, "deduplicated order event");
         return new Response(null, { status: 200 });
       }
     }
@@ -62,7 +68,7 @@ export const action = async ({ request }) => {
       });
 
       if (recentUpdated) {
-        console.log(`[DEDUPLICATION] Deleting orders_updated event ${recentUpdated.id} and creating orders_create for order ${entityId}.`);
+        log.info({ deletedChangeId: recentUpdated.id, entityId }, "replacing recent orders_updated with orders_create");
         await prisma.change.delete({
           where: { id: recentUpdated.id },
         });
@@ -79,7 +85,7 @@ export const action = async ({ request }) => {
       orderCreatedAt = new Date();
     }
     
-    console.log(`[ORDER WEBHOOK] Using occurredAt: ${orderCreatedAt.toISOString()} for order ${entityId} (created_at: ${payload?.created_at || 'not provided'})`);
+    log.debug({ entityId, occurredAt: orderCreatedAt.toISOString(), payloadCreatedAt: payload?.created_at ?? null }, "resolved order occurredAt");
     
     await prisma.change.create({
       data: {
@@ -93,10 +99,10 @@ export const action = async ({ request }) => {
       },
     });
 
-    console.log("Order change created:", { type: changeType, summary, entityId });
+    log.info({ type: changeType, entityId, summary }, "change created");
     return new Response(null, { status: 200 });
   } catch (error) {
-    console.error("Order webhook error:", error);
+    log.error({ err: error }, "order webhook failed");
     return new Response(null, { status: 200 });
   }
 };
