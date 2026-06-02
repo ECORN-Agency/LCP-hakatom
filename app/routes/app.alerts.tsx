@@ -168,19 +168,11 @@ export default function Alerts() {
 
       <s-section id="alerts-intro-section" heading="How alerts work">
         <s-box padding="base" background="base" borderWidth="base" borderColor="base" borderRadius="base">
-          <s-stack gap="small">
-            <s-text>
-              When a Shopify event lands in your store, the alert worker waits a bit (so
-              there's after-window data), computes the recommendation, and if it crosses
-              your threshold it sends you an email.
-            </s-text>
-            <s-text color="subdued" type="subdued">
-              The cron runs every 15 minutes. Email delivery uses Resend — set
-              <code> RESEND_API_KEY</code> and <code> ALERT_FROM_EMAIL</code> in Vercel
-              env vars to actually receive mail. Without those, the rule still records
-              but nothing is sent.
-            </s-text>
-          </s-stack>
+          <s-text>
+            When something changes in your store, we wait until we have enough
+            post-event data, compute the impact, and email you if it crosses the
+            threshold you set below. Alerts are checked once a day.
+          </s-text>
         </s-box>
       </s-section>
 

@@ -393,7 +393,7 @@ export default function Analytics() {
               </s-text>
               {compareMinutes >= 10080 && (
                 <s-badge tone="warning">
-                  7d backfill may hit a Vercel function timeout — coming fix in Phase 2.3
+                  7-day comparisons need a lot of historical data — first runs may take a minute or show partial coverage.
                 </s-badge>
               )}
               {compareMinutes * 2 > minutes && (
@@ -586,7 +586,7 @@ export default function Analytics() {
                             )}
 
                             {anyPartial && (
-                              <s-badge tone="warning">Partial data (pagination not implemented)</s-badge>
+                              <s-badge tone="warning">Partial data — one bucket had more orders than we could pull in time</s-badge>
                             )}
 
                             <s-box
