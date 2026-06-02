@@ -1,4 +1,4 @@
-import { useLoaderData } from "react-router";
+import { useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -76,7 +76,7 @@ export default function Home() {
           >
             <s-stack gap="small">
               <s-text color="subdued" type="subdued">Events captured (24h)</s-text>
-              <s-text type="strong" size="large">{events24h}</s-text>
+              <s-heading>{events24h}</s-heading>
               <s-text color="subdued" type="subdued">
                 {events7d} in the last 7 days
               </s-text>
@@ -97,7 +97,7 @@ export default function Home() {
                   {pixelActive ? "Active" : "Inactive"}
                 </s-badge>
               </s-stack>
-              <s-text type="strong" size="large">{pixelEvents24h}</s-text>
+              <s-heading>{pixelEvents24h}</s-heading>
               <s-text color="subdued" type="subdued">
                 customer events captured today
               </s-text>
@@ -113,7 +113,7 @@ export default function Home() {
           >
             <s-stack gap="small">
               <s-text color="subdued" type="subdued">Active alerts</s-text>
-              <s-text type="strong" size="large">{alertsActive}</s-text>
+              <s-heading>{alertsActive}</s-heading>
               <s-text color="subdued" type="subdued">
                 rules currently watching your store
               </s-text>
@@ -157,7 +157,7 @@ export default function Home() {
           >
             <s-stack direction="inline" justifyContent="space-between" alignItems="center" gap="base">
               <s-stack gap="small">
-                <s-text type="strong" size="medium">Timeline</s-text>
+                <s-text type="strong">Timeline</s-text>
                 <s-text color="subdued">
                   Every change in your store, newest first. Theme publishes, price
                   updates, stock moves, orders. Add your own notes for context.
@@ -178,7 +178,7 @@ export default function Home() {
           >
             <s-stack direction="inline" justifyContent="space-between" alignItems="center" gap="base">
               <s-stack gap="small">
-                <s-text type="strong" size="medium">Analytics</s-text>
+                <s-text type="strong">Analytics</s-text>
                 <s-text color="subdued">
                   For any change, compare what happened after with your store's
                   normal pattern at the same time of day and day of week. See
@@ -200,7 +200,7 @@ export default function Home() {
           >
             <s-stack direction="inline" justifyContent="space-between" alignItems="center" gap="base">
               <s-stack gap="small">
-                <s-text type="strong" size="medium">Alerts</s-text>
+                <s-text type="strong">Alerts</s-text>
                 <s-text color="subdued">
                   Get an email when a change looks like it hurt your sales —
                   before you find out from a customer or a quiet day.
@@ -230,7 +230,7 @@ export default function Home() {
 }
 
 export function ErrorBoundary() {
-  return boundary.error(useLoaderData());
+  return boundary.error(useRouteError());
 }
 
 export const headers = (headersArgs) => {
