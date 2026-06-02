@@ -8,6 +8,7 @@
 # the pixel for that store with the settings declared below.
 
 api_version = "2026-01"
+uid = "edc30d23-886d-e579-bc5a-4877e258f5853e78c33d"
 
 [[extensions]]
 type = "web_pixel_extension"

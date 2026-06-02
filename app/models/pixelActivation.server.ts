@@ -76,6 +76,20 @@ export async function ensurePixelActivated({
     }
 
     const data: any = await response.json();
+
+    // GraphQL top-level errors (access scope denials, query syntax, etc.)
+    // arrive here with HTTP 200, so response.ok above wasn't enough.
+    const topLevelErrors = Array.isArray(data?.errors) ? data.errors : [];
+    if (topLevelErrors.length > 0) {
+      const message = topLevelErrors.map((e: any) => e.message).join("; ");
+      log.warn({ topLevelErrors: message }, "webPixelCreate returned GraphQL errors");
+      await prisma.shopConfig.update({
+        where: { shop },
+        data: { pixelLastError: message.slice(0, 500) },
+      });
+      return { activated: false, error: message };
+    }
+
     const userErrors = data?.data?.webPixelCreate?.userErrors ?? [];
 
     if (userErrors.length > 0) {
