@@ -1,0 +1,37 @@
+# Web Pixel extension — fires customer-side events from the storefront sandbox
+# into our backend so we can measure storefront impact (conversion, cart starts,
+# product impressions) instead of relying solely on order webhooks that lag
+# by minutes-to-hours.
+#
+# Activation: after `shopify app deploy`, run the webPixelCreate mutation per
+# shop (see README → "Activating the storefront pixel"). The mutation enables
+# the pixel for that store with the settings declared below.
+
+api_version = "2026-01"
+
+[[extensions]]
+type = "web_pixel_extension"
+name = "LSP Storefront Pixel"
+handle = "lsp-storefront-pixel"
+runtime_context = "strict"
+
+[extensions.customer_privacy]
+analytics = true
+marketing = false
+preferences = false
+sale_of_data = "disabled"
+
+[extensions.settings]
+type = "object"
+
+  [extensions.settings.fields.shop_domain]
+  name = "Shop domain"
+  description = "myshopify.com domain of the store this pixel is installed in. Used by our backend to associate events with the right shop."
+  type = "single_line_text_field"
+  validations = [{ name = "min", value = "1" }]
+
+  [extensions.settings.fields.ingest_url]
+  name = "Ingest URL"
+  description = "Backend endpoint receiving pixel events. Defaults to the production app URL; override in development for local tunnels."
+  type = "single_line_text_field"
+  validations = [{ name = "min", value = "1" }]

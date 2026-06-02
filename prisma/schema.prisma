@@ -51,6 +51,27 @@ model Change {
   @@index([shop, occurredAt])
 }
 
+// Storefront analytics events forwarded from the Web Pixel extension running
+// in the customer-facing sandbox iframe. Unlike orders webhooks (which lag by
+// the time it takes a customer to pay), these arrive in seconds and let us
+// measure conversion / cart abandonment / Web Vitals around a theme publish.
+//
+// Payload is intentionally slim and PII-free.
+model PixelEvent {
+  id         String   @id @default(cuid())
+  shop       String
+  eventName  String   // page_viewed | product_viewed | cart_viewed | product_added_to_cart | checkout_started | checkout_completed
+  occurredAt DateTime
+  receivedAt DateTime @default(now())
+  productId  String?
+  variantId  String?
+  totalAmount Float?
+  data       Json?
+
+  @@index([shop, eventName, occurredAt])
+  @@index([shop, occurredAt])
+}
+
 // User-configured alert rules. The cron worker evaluates recent Change rows
 // against each enabled rule and dispatches a notification through `channel`.
 //

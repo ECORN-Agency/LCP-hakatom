@@ -1,0 +1,11 @@
+{
+  "name": "lsp-storefront-pixel",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "shopify": "shopify"
+  },
+  "dependencies": {
+    "@shopify/web-pixels-extension": "^0.2.0"
+  }
+}

@@ -1,8 +1,9 @@
 {
   "crons": [
     {
+      "_comment": "Hobby plan only supports daily crons. Bump to */15 * * * * after upgrading to Pro, or use an external pinger (GitHub Actions, cron-job.org, QStash) for finer granularity. The endpoint itself is safe to call any time — it just looks at recent unprocessed Change rows.",
       "path": "/api/cron/evaluate-alerts",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 12 * * *"
     }
   ]
 }
