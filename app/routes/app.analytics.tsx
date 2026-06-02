@@ -48,7 +48,14 @@ export const action = async ({ request }) => {
   if (intent === "backfill") {
     const minutes = parseInt(formData.get("minutes") || "120", 10);
     const result = await backfillLastNMinutes(admin, session.shop, minutes);
-    return { ok: true, anyPartial: result.anyPartial };
+    if (result.locked) {
+      return {
+        ok: false,
+        locked: true,
+        error: "Another backfill is already running for this shop. Wait a bit and try again.",
+      };
+    }
+    return { ok: true, anyPartial: result.anyPartial, updatedBuckets: result.updatedBuckets };
   }
 
   return { ok: false };
@@ -408,6 +415,9 @@ export default function Analytics() {
             </s-text>
             {anyPartial && (
               <s-badge tone="warning">Partial data (at least one bucket hit the backfill cap)</s-badge>
+            )}
+            {fetcher.data?.locked && (
+              <s-badge tone="warning">{fetcher.data.error}</s-badge>
             )}
           </s-stack>
         </s-box>

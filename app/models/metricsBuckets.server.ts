@@ -1,5 +1,6 @@
 import prisma from "../db.server";
 import { logger } from "../logger.server";
+import { graphqlWithRetry, type AdminGraphqlClient } from "../lib/shopifyGraphql.server";
 
 export function normalizeTo10MinBucketUTC(date: Date): Date {
   const d = new Date(date);
@@ -15,28 +16,36 @@ export function normalizeTo10MinBucketUTC(date: Date): Date {
 const MAX_PAGES_PER_BUCKET = 20;
 const PAGE_SIZE = 250;
 
-export async function fetchOrdersStats(admin, sinceISO, untilISO) {
-  const ordersQuery = `
-    query getOrders($first: Int!, $after: String, $query: String!) {
-      orders(first: $first, after: $after, query: $query) {
-        edges {
-          cursor
-          node {
-            totalPriceSet {
-              shopMoney {
-                amount
-              }
+// A backfill that's already this old is assumed dead (Vercel function timed
+// out, etc.) — we let a new run reclaim the lock.
+const STALE_LOCK_MS = 5 * 60 * 1000;
+
+const ORDERS_QUERY = `
+  query getOrders($first: Int!, $after: String, $query: String!) {
+    orders(first: $first, after: $after, query: $query) {
+      edges {
+        cursor
+        node {
+          totalPriceSet {
+            shopMoney {
+              amount
             }
           }
         }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
       }
     }
-  `;
+  }
+`;
 
+export async function fetchOrdersStats(
+  admin: AdminGraphqlClient,
+  sinceISO: string,
+  untilISO: string,
+) {
   const sinceDate = new Date(sinceISO).toISOString();
   const untilDate = new Date(untilISO).toISOString();
   const queryFilter = `created_at:>=${sinceDate} AND created_at:<${untilDate} AND -test:true`;
@@ -48,15 +57,19 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO) {
   let partial = false;
 
   while (true) {
-    const response = await admin.graphql(ordersQuery, {
-      variables: { first: PAGE_SIZE, after, query: queryFilter },
-    });
+    const data = await graphqlWithRetry<any>(
+      admin,
+      ORDERS_QUERY,
+      { first: PAGE_SIZE, after, query: queryFilter },
+      { opName: "fetchOrdersStats" },
+    );
 
-    if (!response.ok) {
-      throw new Error(`GraphQL error: ${response.statusText}`);
+    if (data.errors && data.errors.length > 0) {
+      throw new Error(
+        `fetchOrdersStats GraphQL errors: ${data.errors.map((e) => e.message).join("; ")}`,
+      );
     }
 
-    const data = await response.json();
     const edges = data?.data?.orders?.edges ?? [];
     const pageInfo = data?.data?.orders?.pageInfo ?? { hasNextPage: false, endCursor: null };
 
@@ -69,7 +82,6 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO) {
     if (!pageInfo.hasNextPage) break;
 
     if (pages >= MAX_PAGES_PER_BUCKET) {
-      // We hit the safety cap — report partial so the UI can warn the user.
       logger.warn(
         { sinceISO, untilISO, pages, ordersSoFar: orders, cap: MAX_PAGES_PER_BUCKET },
         "fetchOrdersStats hit MAX_PAGES_PER_BUCKET, stopping with partial=true",
@@ -123,34 +135,87 @@ export async function getBucketMetrics(shop, fromISO, toISO) {
   });
 }
 
-export async function backfillLastNMinutes(admin, shop, minutes = 120) {
-  const nowUTC = new Date();
-  const startUTC = new Date(nowUTC.getTime() - minutes * 60 * 1000);
+// Try to claim the per-shop backfill lock. Returns true if we got it, false
+// if another invocation already owns a fresh lock. Stale locks (older than
+// STALE_LOCK_MS without a finish) are reclaimed automatically.
+export async function tryAcquireBackfillLock(shop: string): Promise<boolean> {
+  await prisma.shopConfig.upsert({
+    where: { shop },
+    create: { shop },
+    update: {},
+  });
 
-  let updatedBuckets = 0;
-  let anyPartial = false;
+  const config = await prisma.shopConfig.findUnique({ where: { shop } });
+  if (!config) return false;
 
-  const bucketSize = 10 * 60 * 1000;
+  const now = new Date();
+  const lockIsActive =
+    config.backfillStartedAt !== null &&
+    config.backfillFinishedAt === null &&
+    now.getTime() - config.backfillStartedAt.getTime() < STALE_LOCK_MS;
 
-  for (let bucketStart = normalizeTo10MinBucketUTC(startUTC); bucketStart < nowUTC; bucketStart = new Date(bucketStart.getTime() + bucketSize)) {
-    const bucketEnd = new Date(bucketStart.getTime() + bucketSize);
-    const bucketStartISO = bucketStart.toISOString();
-    const bucketEndISO = bucketEnd.toISOString();
+  if (lockIsActive) return false;
 
-    try {
-      const stats = await fetchOrdersStats(admin, bucketStartISO, bucketEndISO);
-      await upsertBucketMetric(shop, bucketStart, stats.orders, stats.revenue);
-      updatedBuckets++;
-
-      if (stats.partial) {
-        anyPartial = true;
-      }
-    } catch (error) {
-      logger.error({ err: error, shop, bucketStart: bucketStartISO, bucketEnd: bucketEndISO }, "failed to backfill bucket");
-    }
-  }
-
-  return { updatedBuckets, anyPartial };
+  await prisma.shopConfig.update({
+    where: { shop },
+    data: { backfillStartedAt: now, backfillFinishedAt: null },
+  });
+  return true;
 }
 
+export async function releaseBackfillLock(shop: string) {
+  await prisma.shopConfig
+    .update({
+      where: { shop },
+      data: { backfillFinishedAt: new Date() },
+    })
+    .catch(() => {});
+}
 
+export async function backfillLastNMinutes(
+  admin: AdminGraphqlClient,
+  shop: string,
+  minutes = 120,
+): Promise<{ updatedBuckets: number; anyPartial: boolean; locked?: boolean }> {
+  const acquired = await tryAcquireBackfillLock(shop);
+  if (!acquired) {
+    logger.warn({ shop, minutes }, "backfill skipped — another run is in flight");
+    return { updatedBuckets: 0, anyPartial: false, locked: true };
+  }
+
+  try {
+    const nowUTC = new Date();
+    const startUTC = new Date(nowUTC.getTime() - minutes * 60 * 1000);
+
+    let updatedBuckets = 0;
+    let anyPartial = false;
+
+    const bucketSize = 10 * 60 * 1000;
+
+    for (
+      let bucketStart = normalizeTo10MinBucketUTC(startUTC);
+      bucketStart < nowUTC;
+      bucketStart = new Date(bucketStart.getTime() + bucketSize)
+    ) {
+      const bucketEnd = new Date(bucketStart.getTime() + bucketSize);
+      const bucketStartISO = bucketStart.toISOString();
+      const bucketEndISO = bucketEnd.toISOString();
+
+      try {
+        const stats = await fetchOrdersStats(admin, bucketStartISO, bucketEndISO);
+        await upsertBucketMetric(shop, bucketStart, stats.orders, stats.revenue);
+        updatedBuckets++;
+        if (stats.partial) anyPartial = true;
+      } catch (error) {
+        logger.error(
+          { err: error, shop, bucketStart: bucketStartISO, bucketEnd: bucketEndISO },
+          "failed to backfill bucket",
+        );
+      }
+    }
+
+    return { updatedBuckets, anyPartial };
+  } finally {
+    await releaseBackfillLock(shop);
+  }
+}

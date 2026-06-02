@@ -55,13 +55,18 @@ model Change {
 // already been activated for the shop so we don't re-create it on every load.
 // Expand as more shop-level toggles arrive.
 model ShopConfig {
-  id               String    @id @default(cuid())
-  shop             String    @unique
-  pixelActivatedAt DateTime?
-  pixelId          String?
-  pixelLastError   String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id                 String    @id @default(cuid())
+  shop               String    @unique
+  pixelActivatedAt   DateTime?
+  pixelId            String?
+  pixelLastError     String?
+  // Per-shop backfill lock — set when a backfill is in flight, cleared
+  // when it finishes. The UI / API refuses concurrent backfills for the
+  // same shop, so two users clicking Backfill don't waste API quota.
+  backfillStartedAt  DateTime?
+  backfillFinishedAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 // Storefront analytics events forwarded from the Web Pixel extension running
