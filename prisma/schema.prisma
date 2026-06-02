@@ -51,6 +51,19 @@ model Change {
   @@index([shop, occurredAt])
 }
 
+// Per-shop housekeeping state. Right now: tracks whether the Web Pixel has
+// already been activated for the shop so we don't re-create it on every load.
+// Expand as more shop-level toggles arrive.
+model ShopConfig {
+  id               String    @id @default(cuid())
+  shop             String    @unique
+  pixelActivatedAt DateTime?
+  pixelId          String?
+  pixelLastError   String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
 // Storefront analytics events forwarded from the Web Pixel extension running
 // in the customer-facing sandbox iframe. Unlike orders webhooks (which lag by
 // the time it takes a customer to pay), these arrive in seconds and let us

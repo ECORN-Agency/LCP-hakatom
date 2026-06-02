@@ -2,28 +2,36 @@ import { useState } from "react";
 import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { resetAndReactivatePixel } from "../models/pixelActivation.server";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
-  const rules = await prisma.alertRule.findMany({
-    where: { shop: session.shop },
-    orderBy: { createdAt: "desc" },
-  });
+  const [rules, recentDeliveries, shopConfig] = await Promise.all([
+    prisma.alertRule.findMany({
+      where: { shop: session.shop },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.alertDelivery.findMany({
+      where: { shop: session.shop, status: { in: ["sent", "failed"] } },
+      orderBy: { deliveredAt: "desc" },
+      take: 20,
+    }),
+    prisma.shopConfig.findUnique({ where: { shop: session.shop } }),
+  ]);
 
-  const recentDeliveries = await prisma.alertDelivery.findMany({
-    where: { shop: session.shop, status: { in: ["sent", "failed"] } },
-    orderBy: { deliveredAt: "desc" },
-    take: 20,
-  });
-
-  return { rules, recentDeliveries };
+  return { rules, recentDeliveries, shopConfig };
 };
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  if (intent === "reactivate_pixel") {
+    const result = await resetAndReactivatePixel({ shop: session.shop, admin });
+    return { ok: result.activated, error: result.activated ? null : result.error };
+  }
 
   if (intent === "create") {
     const destination = String(formData.get("destination") || "").trim();
@@ -70,10 +78,15 @@ export const action = async ({ request }) => {
 };
 
 export default function Alerts() {
-  const { rules, recentDeliveries } = useLoaderData();
+  const { rules, recentDeliveries, shopConfig } = useLoaderData();
   const createFetcher = useFetcher();
   const toggleFetcher = useFetcher();
   const deleteFetcher = useFetcher();
+  const pixelFetcher = useFetcher();
+
+  const handleReactivatePixel = () => {
+    pixelFetcher.submit({ intent: "reactivate_pixel" }, { method: "POST" });
+  };
 
   const [destination, setDestination] = useState("");
   const [minLabel, setMinLabel] = useState("strong_negative");
@@ -114,6 +127,45 @@ export default function Alerts() {
 
   return (
     <s-page id="alerts-page" heading="Alerts">
+      <s-section id="pixel-status-section" heading="Storefront pixel">
+        <s-box padding="base" background="base" borderWidth="base" borderColor="base" borderRadius="base">
+          <s-stack gap="small">
+            <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+              <s-text type="strong">Web Pixel activation</s-text>
+              {shopConfig?.pixelActivatedAt ? (
+                <s-badge tone="success">Active</s-badge>
+              ) : shopConfig?.pixelLastError ? (
+                <s-badge tone="critical">Failed</s-badge>
+              ) : (
+                <s-badge tone="warning">Not active yet</s-badge>
+              )}
+            </s-stack>
+            <s-text color="subdued">
+              {shopConfig?.pixelActivatedAt
+                ? `Activated ${new Date(shopConfig.pixelActivatedAt).toLocaleString()}. Storefront events flow into PixelEvent in real time. Pixel ID: ${shopConfig.pixelId ?? "n/a"}.`
+                : shopConfig?.pixelLastError
+                  ? `Last attempt failed: ${shopConfig.pixelLastError}`
+                  : "The pixel will activate automatically the next time the app loader runs. Use the button below to force it now."}
+            </s-text>
+            <s-stack direction="inline" gap="small">
+              <s-button
+                variant="secondary"
+                onClick={handleReactivatePixel}
+                loading={pixelFetcher.state !== "idle"}
+              >
+                {shopConfig?.pixelActivatedAt ? "Re-activate pixel" : "Activate pixel now"}
+              </s-button>
+              {pixelFetcher.data?.error && (
+                <s-badge tone="critical">{pixelFetcher.data.error}</s-badge>
+              )}
+              {pixelFetcher.data?.ok && (
+                <s-badge tone="success">Pixel activated</s-badge>
+              )}
+            </s-stack>
+          </s-stack>
+        </s-box>
+      </s-section>
+
       <s-section id="alerts-intro-section" heading="How alerts work">
         <s-box padding="base" background="base" borderWidth="base" borderColor="base" borderRadius="base">
           <s-stack gap="small">
