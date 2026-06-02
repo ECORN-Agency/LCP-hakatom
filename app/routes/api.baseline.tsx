@@ -3,6 +3,7 @@ import {
   computeRollingBaseline,
   fetchActualAfterEvent,
 } from "../models/baseline.server";
+import { fetchPixelFunnel, funnelDeltaPct } from "../models/pixelMetrics.server";
 import { logger } from "../logger.server";
 
 // GET /api/baseline?eventTime=ISO&windowMinutes=1440&lookbackWeeks=4
@@ -47,7 +48,13 @@ export const loader = async ({ request }) => {
   });
 
   try {
-    const [actual, baseline] = await Promise.all([
+    // Pixel funnel windows — same shape as the metric-bucket comparison: W
+    // minutes before the event vs W minutes after.
+    const windowMs = windowMinutes * 60 * 1000;
+    const beforeStart = new Date(eventDate.getTime() - windowMs);
+    const afterEnd = new Date(eventDate.getTime() + windowMs);
+
+    const [actual, baseline, funnelBefore, funnelAfter] = await Promise.all([
       fetchActualAfterEvent({ shop: session.shop, eventTime: eventDate, windowMinutes }),
       computeRollingBaseline({
         shop: session.shop,
@@ -55,7 +62,11 @@ export const loader = async ({ request }) => {
         windowMinutes,
         lookbackWeeks,
       }),
+      fetchPixelFunnel(session.shop, beforeStart, eventDate),
+      fetchPixelFunnel(session.shop, eventDate, afterEnd),
     ]);
+
+    const funnelDelta = funnelDeltaPct(funnelAfter, funnelBefore);
 
     const deltaPct = {
       revenue:
@@ -77,11 +88,22 @@ export const loader = async ({ request }) => {
         weeksWithData: baseline.weeksWithData,
         actualOrders: actual.actualOrders,
         expectedOrders: baseline.expectedOrders,
+        pageViewsBefore: funnelBefore.pageViews,
+        pageViewsAfter: funnelAfter.pageViews,
       },
       "baseline computed",
     );
 
-    return Response.json({ actual, baseline, deltaPct });
+    return Response.json({
+      actual,
+      baseline,
+      deltaPct,
+      funnel: {
+        before: funnelBefore,
+        after: funnelAfter,
+        deltaPct: funnelDelta,
+      },
+    });
   } catch (err) {
     log.error({ err }, "baseline computation failed");
     return Response.json({ error: "internal error" }, { status: 500 });

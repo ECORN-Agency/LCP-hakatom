@@ -15,6 +15,10 @@ export function buildRecommendation({
   revenueDeltaPct,
   ordersDeltaPct,
   aovDeltaPct,
+  // Storefront pixel deltas. Optional — if the pixel has no data in the
+  // window, leave null and we skip the conversion-aware logic.
+  conversionDeltaPct = null,
+  pageViewsDeltaPct = null,
   partialData,
   overlappingEvents,
   coverageBefore,
@@ -124,11 +128,43 @@ export function buildRecommendation({
     tone = "warning";
   }
 
+  // Conversion-rate override for theme events.
+  // For theme changes, customer behaviour on the storefront moves long
+  // before orders do, so a strong conversion-rate drop should dominate the
+  // verdict even if orders haven't reacted yet.
+  if (
+    eventType === "theme_published" ||
+    eventType === "theme_switched" ||
+    eventType === "theme_files_updated"
+  ) {
+    if (conversionDeltaPct !== null) {
+      if (conversionDeltaPct <= -20) {
+        label = "negative";
+        strength = "strong";
+      } else if (conversionDeltaPct <= -10 && label === "neutral") {
+        label = "negative";
+        strength = "moderate";
+      } else if (conversionDeltaPct >= 20 && label !== "negative") {
+        label = "positive";
+        strength = "strong";
+      }
+    }
+  }
+
+  // Re-pick tone after potential conversion override.
+  tone = "info";
+  if (label === "positive" && strength === "strong") tone = "success";
+  else if (label === "negative" && strength === "strong") tone = "critical";
+  else if (label === "positive" || label === "negative") tone = "attention";
+  else if (label === "mixed") tone = "warning";
+
   const text = getRecommendationText(eventType, label, strength, eventContext);
   const drivers = buildDrivers({
     revenueDeltaPct,
     ordersDeltaPct,
     aovDeltaPct,
+    conversionDeltaPct,
+    pageViewsDeltaPct,
     coverageBefore,
     coverageAfter,
     expectedBuckets,
@@ -261,6 +297,8 @@ function buildDrivers({
   revenueDeltaPct,
   ordersDeltaPct,
   aovDeltaPct,
+  conversionDeltaPct,
+  pageViewsDeltaPct,
   coverageBefore,
   coverageAfter,
   expectedBuckets,
@@ -270,6 +308,15 @@ function buildDrivers({
 }) {
   const drivers = [];
   const windowLabel = formatWindowLabel(windowMinutes);
+
+  // Storefront signals first — they're the leading indicator.
+  if (conversionDeltaPct !== null) {
+    drivers.push(`Conversion rate Δ: ${conversionDeltaPct >= 0 ? "+" : ""}${conversionDeltaPct.toFixed(1)}% (${windowLabel}, pixel)`);
+  }
+
+  if (pageViewsDeltaPct !== null) {
+    drivers.push(`Page views Δ: ${pageViewsDeltaPct >= 0 ? "+" : ""}${pageViewsDeltaPct.toFixed(1)}% (${windowLabel}, pixel)`);
+  }
 
   if (revenueDeltaPct !== null) {
     drivers.push(`Revenue Δ: ${revenueDeltaPct >= 0 ? "+" : ""}${revenueDeltaPct.toFixed(1)}% (${windowLabel})`);

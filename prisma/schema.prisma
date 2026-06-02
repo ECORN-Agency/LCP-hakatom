@@ -51,6 +51,28 @@ model Change {
   @@index([shop, occurredAt])
 }
 
+// Inbound webhook queue. Each row is one delivery from Shopify. Webhook
+// handlers do the bare minimum (verify HMAC → enqueue → 200 OK) so we stay
+// well under Shopify's 5s timeout even if downstream DB writes get slow.
+// A separate worker endpoint pulls rows off this table and runs the actual
+// topic-specific processing (dedup, snapshot diff, Change.create, …).
+model WebhookJob {
+  id          String    @id @default(cuid())
+  shop        String
+  topic       String
+  webhookId   String    @unique // X-Shopify-Webhook-Id, deduplicates retries
+  payload     Json
+  status      String    @default("pending") // pending | processing | completed | failed
+  attempts    Int       @default(0)
+  errorMessage String?
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  @@index([status, createdAt])
+  @@index([shop, createdAt])
+}
+
 // Per-shop housekeeping state. Right now: tracks whether the Web Pixel has
 // already been activated for the shop so we don't re-create it on every load.
 // Expand as more shop-level toggles arrive.

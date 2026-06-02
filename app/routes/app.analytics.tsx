@@ -337,6 +337,8 @@ export default function Analytics() {
       revenueDeltaPct: observedChangeData.revenueDeltaPct,
       ordersDeltaPct: observedChangeData.ordersDeltaPct,
       aovDeltaPct: observedChangeData.aovDeltaPct,
+      conversionDeltaPct: baselineData?.funnel?.deltaPct?.conversionRate ?? null,
+      pageViewsDeltaPct: baselineData?.funnel?.deltaPct?.pageViews ?? null,
       partialData: observedChangeData.partialData,
       overlappingEvents: observedChangeData.overlappingEvents,
       coverageBefore: observedChangeData.coverageBefore,
@@ -508,6 +510,11 @@ export default function Analytics() {
             {filteredEvents.map((event) => {
               const isSelected = selectedEventId === event.id;
               const eventObservedChangeData = isSelected ? calculateObservedChange(event) : null;
+              // For the selected event we also have pixel funnel data from the
+              // baseline API call — pass it into buildRecommendation so theme
+              // events can react to conversion-rate drops directly.
+              const funnelDelta = isSelected ? baselineData?.funnel?.deltaPct : null;
+
               const eventObservedChange = eventObservedChangeData ? {
                 ...eventObservedChangeData,
                 recommendation: eventObservedChangeData.waiting ? null : buildRecommendation({
@@ -517,6 +524,8 @@ export default function Analytics() {
                   revenueDeltaPct: eventObservedChangeData.revenueDeltaPct,
                   ordersDeltaPct: eventObservedChangeData.ordersDeltaPct,
                   aovDeltaPct: eventObservedChangeData.aovDeltaPct,
+                  conversionDeltaPct: funnelDelta?.conversionRate ?? null,
+                  pageViewsDeltaPct: funnelDelta?.pageViews ?? null,
                   partialData: eventObservedChangeData.partialData,
                   overlappingEvents: eventObservedChangeData.overlappingEvents,
                   coverageBefore: eventObservedChangeData.coverageBefore,
@@ -618,6 +627,75 @@ export default function Analytics() {
                                 </s-stack>
                               </s-stack>
                             </s-box>
+
+                            {/* Storefront funnel panel — pixel-driven near-realtime signal */}
+                            {isSelected && baselineData?.funnel && (() => {
+                              const f = baselineData.funnel;
+                              const hasAnyTraffic =
+                                f.before.pageViews > 0 || f.after.pageViews > 0;
+                              const fmtPct = (v) =>
+                                v === null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+                              const fmtRate = (v) =>
+                                v === null ? "n/a" : `${(v * 100).toFixed(2)}%`;
+                              return (
+                                <s-box
+                                  id={`funnel-box-${event.id}`}
+                                  padding="base"
+                                  background="base"
+                                  borderWidth="base"
+                                  borderColor="base"
+                                  borderRadius="base"
+                                >
+                                  <s-stack gap="small">
+                                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                                      <s-text type="strong">Storefront funnel (Web Pixel)</s-text>
+                                      {hasAnyTraffic ? (
+                                        <s-badge tone="success">Live signal</s-badge>
+                                      ) : (
+                                        <s-badge tone="warning">No pixel traffic in window</s-badge>
+                                      )}
+                                    </s-stack>
+                                    {hasAnyTraffic ? (
+                                      <s-stack gap="small">
+                                        <s-stack direction="inline" justifyContent="space-between">
+                                          <s-text type="strong">Page views</s-text>
+                                          <s-text>Before: {f.before.pageViews}</s-text>
+                                          <s-text>After: {f.after.pageViews}</s-text>
+                                          <s-text type="strong">{fmtPct(f.deltaPct.pageViews)}</s-text>
+                                        </s-stack>
+                                        <s-stack direction="inline" justifyContent="space-between">
+                                          <s-text type="strong">Cart adds</s-text>
+                                          <s-text>Before: {f.before.cartAdds}</s-text>
+                                          <s-text>After: {f.after.cartAdds}</s-text>
+                                          <s-text type="strong">{fmtPct(f.deltaPct.cartAdds)}</s-text>
+                                        </s-stack>
+                                        <s-stack direction="inline" justifyContent="space-between">
+                                          <s-text type="strong">Checkouts started</s-text>
+                                          <s-text>Before: {f.before.checkoutsStarted}</s-text>
+                                          <s-text>After: {f.after.checkoutsStarted}</s-text>
+                                          <s-text type="strong">{fmtPct(f.deltaPct.checkoutsStarted)}</s-text>
+                                        </s-stack>
+                                        <s-stack direction="inline" justifyContent="space-between">
+                                          <s-text type="strong">Conversion rate</s-text>
+                                          <s-text>Before: {fmtRate(f.before.conversionRate)}</s-text>
+                                          <s-text>After: {fmtRate(f.after.conversionRate)}</s-text>
+                                          <s-text type="strong">{fmtPct(f.deltaPct.conversionRate)}</s-text>
+                                        </s-stack>
+                                        <s-text color="subdued" type="subdued">
+                                          Pixel data arrives in seconds vs orders that lag by minutes-to-hours.
+                                          For theme changes, conversion rate Δ is the earliest meaningful signal.
+                                        </s-text>
+                                      </s-stack>
+                                    ) : (
+                                      <s-text color="subdued" type="subdued">
+                                        No storefront pixel events in this window. Either no customer traffic
+                                        in the comparison range, or the pixel isn't active yet.
+                                      </s-text>
+                                    )}
+                                  </s-stack>
+                                </s-box>
+                              );
+                            })()}
 
                             {/* Rolling baseline panel — only rendered for the currently selected event */}
                             {isSelected && (
