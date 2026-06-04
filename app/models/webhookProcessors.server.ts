@@ -25,24 +25,35 @@ export type JobInput = {
   payload: any;
 };
 
+// Shopify ships webhook topic strings in different shapes across API versions
+// and across the various SDKs (sometimes "themes/publish", sometimes
+// "THEMES_PUBLISH"). Normalize to the slashed-lowercase form once at the
+// entry so the rest of the file can rely on it.
+function normalizeTopic(raw: string): string {
+  return raw.toLowerCase().replace(/_/g, "/");
+}
+
 export async function processWebhookJob(job: JobInput) {
-  switch (job.topic) {
+  const topic = normalizeTopic(job.topic);
+  const normalizedJob = { ...job, topic };
+
+  switch (topic) {
     case "themes/publish":
     case "themes/update":
-      return processThemeJob(job);
+      return processThemeJob(normalizedJob);
     case "products/create":
     case "products/update":
     case "products/delete":
-      return processProductJob(job);
+      return processProductJob(normalizedJob);
     case "orders/create":
     case "orders/updated":
-      return processOrderJob(job);
+      return processOrderJob(normalizedJob);
     case "collections/create":
     case "collections/update":
     case "collections/delete":
-      return processCollectionJob(job);
+      return processCollectionJob(normalizedJob);
     default:
-      throw new Error(`unknown webhook topic: ${job.topic}`);
+      throw new Error(`unknown webhook topic: ${job.topic} (normalized: ${topic})`);
   }
 }
 
