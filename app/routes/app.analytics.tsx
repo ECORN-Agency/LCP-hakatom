@@ -597,34 +597,64 @@ export default function Analytics() {
                               borderColor="base"
                               borderRadius="base"
                             >
-                              <s-stack id={`comparison-stack-${event.id}`} gap="base">
-                                <s-stack id={`revenue-row-${event.id}`} direction="inline" justifyContent="space-between">
-                                  <s-text type="strong">Revenue</s-text>
-                                  <s-text>Before: ${eventObservedChange.beforeRevenue.toFixed(2)}</s-text>
-                                  <s-text>After: ${eventObservedChange.afterRevenue.toFixed(2)}</s-text>
-                                  <s-text type="strong">
-                                    Δ {eventObservedChange.revenueDelta >= 0 ? "+" : ""}${eventObservedChange.revenueDelta.toFixed(2)}
-                                    {eventObservedChange.revenueDeltaPct !== null && ` (${eventObservedChange.revenueDeltaPct >= 0 ? "+" : ""}${eventObservedChange.revenueDeltaPct.toFixed(1)}%)`}
-                                  </s-text>
-                                </s-stack>
-                                <s-stack id={`orders-row-${event.id}`} direction="inline" justifyContent="space-between">
-                                  <s-text type="strong">Orders</s-text>
-                                  <s-text>Before: {eventObservedChange.beforeOrders}</s-text>
-                                  <s-text>After: {eventObservedChange.afterOrders}</s-text>
-                                  <s-text type="strong">
-                                    Δ {eventObservedChange.ordersDelta >= 0 ? "+" : ""}{eventObservedChange.ordersDelta}
-                                    {eventObservedChange.ordersDeltaPct !== null && ` (${eventObservedChange.ordersDeltaPct >= 0 ? "+" : ""}${eventObservedChange.ordersDeltaPct.toFixed(1)}%)`}
-                                  </s-text>
-                                </s-stack>
-                                <s-stack id={`aov-row-${event.id}`} direction="inline" justifyContent="space-between">
-                                  <s-text type="strong">AOV</s-text>
-                                  <s-text>Before: {eventObservedChange.beforeAOV !== null ? `$${eventObservedChange.beforeAOV.toFixed(2)}` : "n/a"}</s-text>
-                                  <s-text>After: {eventObservedChange.afterAOV !== null ? `$${eventObservedChange.afterAOV.toFixed(2)}` : "n/a"}</s-text>
-                                  <s-text type="strong">
-                                    Δ {eventObservedChange.aovDelta !== null ? `${eventObservedChange.aovDelta >= 0 ? "+" : ""}$${eventObservedChange.aovDelta.toFixed(2)}` : "n/a"}
-                                    {eventObservedChange.aovDeltaPct !== null && ` (${eventObservedChange.aovDeltaPct >= 0 ? "+" : ""}${eventObservedChange.aovDeltaPct.toFixed(1)}%)`}
-                                  </s-text>
-                                </s-stack>
+                              <s-stack id={`comparison-stack-${event.id}`} gap="small">
+                                {[
+                                  {
+                                    label: "Revenue",
+                                    before: `$${eventObservedChange.beforeRevenue.toFixed(2)}`,
+                                    after: `$${eventObservedChange.afterRevenue.toFixed(2)}`,
+                                    delta:
+                                      `Δ ${eventObservedChange.revenueDelta >= 0 ? "+" : ""}$${eventObservedChange.revenueDelta.toFixed(2)}` +
+                                      (eventObservedChange.revenueDeltaPct !== null
+                                        ? ` (${eventObservedChange.revenueDeltaPct >= 0 ? "+" : ""}${eventObservedChange.revenueDeltaPct.toFixed(1)}%)`
+                                        : ""),
+                                  },
+                                  {
+                                    label: "Orders",
+                                    before: String(eventObservedChange.beforeOrders),
+                                    after: String(eventObservedChange.afterOrders),
+                                    delta:
+                                      `Δ ${eventObservedChange.ordersDelta >= 0 ? "+" : ""}${eventObservedChange.ordersDelta}` +
+                                      (eventObservedChange.ordersDeltaPct !== null
+                                        ? ` (${eventObservedChange.ordersDeltaPct >= 0 ? "+" : ""}${eventObservedChange.ordersDeltaPct.toFixed(1)}%)`
+                                        : ""),
+                                  },
+                                  {
+                                    label: "AOV",
+                                    before:
+                                      eventObservedChange.beforeAOV !== null
+                                        ? `$${eventObservedChange.beforeAOV.toFixed(2)}`
+                                        : "n/a",
+                                    after:
+                                      eventObservedChange.afterAOV !== null
+                                        ? `$${eventObservedChange.afterAOV.toFixed(2)}`
+                                        : "n/a",
+                                    delta:
+                                      eventObservedChange.aovDelta !== null
+                                        ? `Δ ${eventObservedChange.aovDelta >= 0 ? "+" : ""}$${eventObservedChange.aovDelta.toFixed(2)}` +
+                                          (eventObservedChange.aovDeltaPct !== null
+                                            ? ` (${eventObservedChange.aovDeltaPct >= 0 ? "+" : ""}${eventObservedChange.aovDeltaPct.toFixed(1)}%)`
+                                            : "")
+                                        : "Δ n/a",
+                                  },
+                                ].map((row) => (
+                                  <div
+                                    key={`${event.id}-${row.label}`}
+                                    style={{
+                                      display: "grid",
+                                      gridTemplateColumns: "1.2fr 1fr 1fr 1.5fr",
+                                      gap: "var(--p-space-3, 12px)",
+                                      alignItems: "center",
+                                    }}
+                                  >
+                                    <s-text type="strong">{row.label}</s-text>
+                                    <s-text color="subdued">Before: {row.before}</s-text>
+                                    <s-text color="subdued">After: {row.after}</s-text>
+                                    <div style={{ textAlign: "right" }}>
+                                      <s-text type="strong">{row.delta}</s-text>
+                                    </div>
+                                  </div>
+                                ))}
                               </s-stack>
                             </s-box>
 
@@ -729,36 +759,58 @@ export default function Analytics() {
 
                                   {baselineFetcher.state === "idle" && baselineData && baselineData.baseline.weeksWithData > 0 && (
                                     <s-stack gap="small">
-                                      <s-stack direction="inline" justifyContent="space-between">
-                                        <s-text type="strong">Revenue</s-text>
-                                        <s-text>Actual: ${baselineData.actual.actualRevenue.toFixed(2)}</s-text>
-                                        <s-text>Expected: ${baselineData.baseline.expectedRevenue.toFixed(2)}</s-text>
-                                        <s-text type="strong">
-                                          {baselineData.deltaPct.revenue !== null
-                                            ? `Δ ${baselineData.deltaPct.revenue >= 0 ? "+" : ""}${baselineData.deltaPct.revenue.toFixed(1)}%`
-                                            : "Δ n/a"}
-                                        </s-text>
-                                      </s-stack>
-                                      <s-stack direction="inline" justifyContent="space-between">
-                                        <s-text type="strong">Orders</s-text>
-                                        <s-text>Actual: {baselineData.actual.actualOrders}</s-text>
-                                        <s-text>Expected: {baselineData.baseline.expectedOrders.toFixed(1)}</s-text>
-                                        <s-text type="strong">
-                                          {baselineData.deltaPct.orders !== null
-                                            ? `Δ ${baselineData.deltaPct.orders >= 0 ? "+" : ""}${baselineData.deltaPct.orders.toFixed(1)}%`
-                                            : "Δ n/a"}
-                                        </s-text>
-                                      </s-stack>
-                                      <s-stack direction="inline" justifyContent="space-between">
-                                        <s-text type="strong">AOV</s-text>
-                                        <s-text>Actual: {baselineData.actual.actualAOV !== null ? `$${baselineData.actual.actualAOV.toFixed(2)}` : "n/a"}</s-text>
-                                        <s-text>Expected: {baselineData.baseline.expectedAOV !== null ? `$${baselineData.baseline.expectedAOV.toFixed(2)}` : "n/a"}</s-text>
-                                        <s-text type="strong">
-                                          {baselineData.deltaPct.aov !== null
-                                            ? `Δ ${baselineData.deltaPct.aov >= 0 ? "+" : ""}${baselineData.deltaPct.aov.toFixed(1)}%`
-                                            : "Δ n/a"}
-                                        </s-text>
-                                      </s-stack>
+                                      {[
+                                        {
+                                          label: "Revenue",
+                                          actual: `$${baselineData.actual.actualRevenue.toFixed(2)}`,
+                                          expected: `$${baselineData.baseline.expectedRevenue.toFixed(2)}`,
+                                          delta:
+                                            baselineData.deltaPct.revenue !== null
+                                              ? `Δ ${baselineData.deltaPct.revenue >= 0 ? "+" : ""}${baselineData.deltaPct.revenue.toFixed(1)}%`
+                                              : "Δ n/a",
+                                        },
+                                        {
+                                          label: "Orders",
+                                          actual: String(baselineData.actual.actualOrders),
+                                          expected: baselineData.baseline.expectedOrders.toFixed(1),
+                                          delta:
+                                            baselineData.deltaPct.orders !== null
+                                              ? `Δ ${baselineData.deltaPct.orders >= 0 ? "+" : ""}${baselineData.deltaPct.orders.toFixed(1)}%`
+                                              : "Δ n/a",
+                                        },
+                                        {
+                                          label: "AOV",
+                                          actual:
+                                            baselineData.actual.actualAOV !== null
+                                              ? `$${baselineData.actual.actualAOV.toFixed(2)}`
+                                              : "n/a",
+                                          expected:
+                                            baselineData.baseline.expectedAOV !== null
+                                              ? `$${baselineData.baseline.expectedAOV.toFixed(2)}`
+                                              : "n/a",
+                                          delta:
+                                            baselineData.deltaPct.aov !== null
+                                              ? `Δ ${baselineData.deltaPct.aov >= 0 ? "+" : ""}${baselineData.deltaPct.aov.toFixed(1)}%`
+                                              : "Δ n/a",
+                                        },
+                                      ].map((row) => (
+                                        <div
+                                          key={`baseline-${event.id}-${row.label}`}
+                                          style={{
+                                            display: "grid",
+                                            gridTemplateColumns: "1.2fr 1.2fr 1.2fr 1fr",
+                                            gap: "var(--p-space-3, 12px)",
+                                            alignItems: "center",
+                                          }}
+                                        >
+                                          <s-text type="strong">{row.label}</s-text>
+                                          <s-text color="subdued">Actual: {row.actual}</s-text>
+                                          <s-text color="subdued">Expected: {row.expected}</s-text>
+                                          <div style={{ textAlign: "right" }}>
+                                            <s-text type="strong">{row.delta}</s-text>
+                                          </div>
+                                        </div>
+                                      ))}
                                       <s-text color="subdued" type="subdued">
                                         Expected = average of the same wall-clock window across the prior {baselineData.baseline.weeksWithData} weeks.
                                         Smooths out hour-of-day and day-of-week seasonality.
