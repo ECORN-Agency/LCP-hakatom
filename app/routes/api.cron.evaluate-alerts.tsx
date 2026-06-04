@@ -149,6 +149,11 @@ export const loader = async ({ request }) => {
           text,
         });
 
+        // Pace below Resend free-tier limit (5/sec). Cheap on a small batch,
+        // and the retry-with-backoff in sendEmail catches anything that still
+        // slips through.
+        await new Promise((r) => setTimeout(r, 250));
+
         await prisma.alertDelivery
           .create({
             data: {
