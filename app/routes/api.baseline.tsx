@@ -66,7 +66,9 @@ export const loader = async ({ request }) => {
       fetchPixelFunnel(session.shop, eventDate, afterEnd),
     ]);
 
-    const funnelDelta = funnelDeltaPct(funnelAfter, funnelBefore);
+    // funnelDeltaPct signature is (before, after) — pass them in that order
+    // so the resulting Δ% is positive when "after" is higher than "before".
+    const funnelDelta = funnelDeltaPct(funnelBefore, funnelAfter);
 
     const deltaPct = {
       revenue:

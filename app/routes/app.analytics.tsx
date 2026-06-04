@@ -657,30 +657,29 @@ export default function Analytics() {
                                     </s-stack>
                                     {hasAnyTraffic ? (
                                       <s-stack gap="small">
-                                        <s-stack direction="inline" justifyContent="space-between">
-                                          <s-text type="strong">Page views</s-text>
-                                          <s-text>Before: {f.before.pageViews}</s-text>
-                                          <s-text>After: {f.after.pageViews}</s-text>
-                                          <s-text type="strong">{fmtPct(f.deltaPct.pageViews)}</s-text>
-                                        </s-stack>
-                                        <s-stack direction="inline" justifyContent="space-between">
-                                          <s-text type="strong">Cart adds</s-text>
-                                          <s-text>Before: {f.before.cartAdds}</s-text>
-                                          <s-text>After: {f.after.cartAdds}</s-text>
-                                          <s-text type="strong">{fmtPct(f.deltaPct.cartAdds)}</s-text>
-                                        </s-stack>
-                                        <s-stack direction="inline" justifyContent="space-between">
-                                          <s-text type="strong">Checkouts started</s-text>
-                                          <s-text>Before: {f.before.checkoutsStarted}</s-text>
-                                          <s-text>After: {f.after.checkoutsStarted}</s-text>
-                                          <s-text type="strong">{fmtPct(f.deltaPct.checkoutsStarted)}</s-text>
-                                        </s-stack>
-                                        <s-stack direction="inline" justifyContent="space-between">
-                                          <s-text type="strong">Conversion rate</s-text>
-                                          <s-text>Before: {fmtRate(f.before.conversionRate)}</s-text>
-                                          <s-text>After: {fmtRate(f.after.conversionRate)}</s-text>
-                                          <s-text type="strong">{fmtPct(f.deltaPct.conversionRate)}</s-text>
-                                        </s-stack>
+                                        {[
+                                          { label: "Page views", before: f.before.pageViews, after: f.after.pageViews, pct: f.deltaPct.pageViews },
+                                          { label: "Cart adds", before: f.before.cartAdds, after: f.after.cartAdds, pct: f.deltaPct.cartAdds },
+                                          { label: "Checkouts started", before: f.before.checkoutsStarted, after: f.after.checkoutsStarted, pct: f.deltaPct.checkoutsStarted },
+                                          { label: "Conversion rate", before: fmtRate(f.before.conversionRate), after: fmtRate(f.after.conversionRate), pct: f.deltaPct.conversionRate },
+                                        ].map((row) => (
+                                          <div
+                                            key={row.label}
+                                            style={{
+                                              display: "grid",
+                                              gridTemplateColumns: "1.6fr 1fr 1fr 0.9fr",
+                                              gap: "var(--p-space-3, 12px)",
+                                              alignItems: "center",
+                                            }}
+                                          >
+                                            <s-text type="strong">{row.label}</s-text>
+                                            <s-text color="subdued">Before: {row.before}</s-text>
+                                            <s-text color="subdued">After: {row.after}</s-text>
+                                            <div style={{ textAlign: "right" }}>
+                                              <s-text type="strong">{fmtPct(row.pct)}</s-text>
+                                            </div>
+                                          </div>
+                                        ))}
                                         <s-text color="subdued" type="subdued">
                                           Pixel data arrives in seconds vs orders that lag by minutes-to-hours.
                                           For theme changes, conversion rate Δ is the earliest meaningful signal.
