@@ -167,20 +167,24 @@ async function processThemeJob({ shop, topic, webhookId, payload }: JobInput) {
   if (topicLower === "themes/update") {
     const themeName = payload?.name || payload?.theme_name || themeId || "Unknown";
 
-    // If a publish/switch just landed (within 5 min) the file changes are
-    // already attributed to it — skip the standalone update row.
+    // Shopify fires a themes/update as part of the publish/switch flow
+    // (because role changes to "main"). We only want to suppress THAT
+    // bookkeeping update, not real merchant edits a minute or two later.
+    // 30s window is wide enough to catch the double-fire but narrow enough
+    // that a customer who switches a theme and immediately edits it still
+    // gets their edits recorded.
     if (isMainTheme) {
       const recentPublish = await prisma.change.findFirst({
         where: {
           shop,
           type: { in: ["theme_published", "theme_switched"] },
           entityId: themeId,
-          occurredAt: { gte: new Date(Date.now() - 300_000) },
+          occurredAt: { gte: new Date(Date.now() - 30_000) },
         },
         orderBy: { occurredAt: "desc" },
       });
       if (recentPublish) {
-        log.info({ themeId, suppressedBy: recentPublish.type }, "deduplicated theme_updated");
+        log.info({ themeId, suppressedBy: recentPublish.type }, "deduplicated theme_updated (publish double-fire)");
         return;
       }
     }
