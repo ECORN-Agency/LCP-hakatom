@@ -14,6 +14,7 @@ import { logger } from "../logger.server";
 import { evaluateChange, ruleMatches } from "../models/alertEvaluation.server";
 import { sendEmail } from "../lib/email.server";
 import { drainWebhookJobs } from "../models/workerDrain.server";
+import { pollAllActiveShops } from "../models/themeChangeRecorder.server";
 
 // Don't scan too far back — events older than this aren't worth alerting on,
 // they're stale.
@@ -32,12 +33,24 @@ export const loader = async ({ request }) => {
   const startedAt = Date.now();
   const log = logger.child({ route: "api.cron.evaluate-alerts" });
 
-  // Backstop: drain any stuck WebhookJobs first so alert evaluation sees
+  // Backstop 1: drain any stuck WebhookJobs first so alert evaluation sees
   // the freshest Change rows. Drain in a loop until empty (or 5 batches max).
   for (let i = 0; i < 5; i++) {
     const drained = await drainWebhookJobs();
     if (drained.processed === 0) break;
     log.info({ drained }, "cron-drained pending jobs");
+  }
+
+  // Backstop 2: poll all installed shops for theme-file changes. This is
+  // how we detect Customizer saves (Shopify doesn't fire a webhook for
+  // file edits). External schedulers should hit /api/cron/poll-themes
+  // at finer granularity for near-realtime detection; this runs once a
+  // day as the safety net.
+  try {
+    const polled = await pollAllActiveShops();
+    log.info({ shopsPolled: polled.length }, "cron-polled theme files");
+  } catch (err) {
+    log.error({ err: String(err) }, "theme polling failed");
   }
 
   const enabledRules = await prisma.alertRule.findMany({
