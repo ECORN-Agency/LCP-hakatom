@@ -354,13 +354,8 @@ export default function Health() {
       <s-section heading="Webhooks received per topic (24h)">
         <s-box padding="base" background="base" borderWidth="base" borderColor="base" borderRadius="base">
           <s-stack gap="small">
-            {!d.hasLiveSubs && (
-              <StatusBadge tone="critical">
-                Shopify reports zero active webhook subscriptions for this app. Run `npx shopify app deploy` to re-register them. The list below is what we expect, not what's live.
-              </StatusBadge>
-            )}
             {d.knownTopics.length === 0 ? (
-              <s-text color="subdued">No webhook subscriptions visible. Check shopify.app.toml is deployed.</s-text>
+              <s-text color="subdued">No webhook topics expected. Check shopify.app.toml is deployed.</s-text>
             ) : (
               d.knownTopics.map((topic) => (
                 <div
