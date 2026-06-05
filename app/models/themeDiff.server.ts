@@ -129,12 +129,15 @@ export function diffThemeFiles(
 }
 
 /**
- * Build a short, merchant-readable list of changed files.
- * Example: "sections/header.liquid, config/settings_data.json +5 more"
+ * Build a merchant-readable comma-separated list of changed files.
+ * No truncation — if 20 distinct files moved, the merchant sees all 20.
+ * Optionally pass maxShown to cap the visible count (e.g. for tight UIs).
  */
-export function summarizeFileList(filenames: string[], maxShown = 3): string {
+export function summarizeFileList(filenames: string[], maxShown?: number): string {
   if (filenames.length === 0) return "";
+  if (maxShown === undefined || filenames.length <= maxShown) {
+    return filenames.join(", ");
+  }
   const shown = filenames.slice(0, maxShown).join(", ");
-  const extra = filenames.length - maxShown;
-  return extra > 0 ? `${shown} +${extra} more` : shown;
+  return `${shown} +${filenames.length - maxShown} more`;
 }
