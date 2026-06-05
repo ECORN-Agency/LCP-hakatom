@@ -211,6 +211,28 @@ export default function Home() {
               </s-link>
             </s-stack>
           </s-box>
+
+          <s-box
+            padding="base"
+            background="base"
+            borderWidth="base"
+            borderColor="base"
+            borderRadius="base"
+          >
+            <s-stack direction="inline" justifyContent="space-between" alignItems="center" gap="base">
+              <s-stack gap="small">
+                <s-text type="strong">Health</s-text>
+                <s-text color="subdued">
+                  Diagnostic dashboard — webhook queue status, pixel firing,
+                  backfill state, alert deliveries. Useful when something
+                  feels off and you want to know if it's the app or the data.
+                </s-text>
+              </s-stack>
+              <s-link href="/app/health">
+                <s-button variant="secondary">Open Health</s-button>
+              </s-link>
+            </s-stack>
+          </s-box>
         </s-stack>
       </s-section>
 

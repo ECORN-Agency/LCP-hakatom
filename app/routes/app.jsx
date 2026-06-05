@@ -28,6 +28,7 @@ export default function App() {
         <s-link href="/app/timeline">Timeline</s-link>
         <s-link href="/app/analytics">Analytics</s-link>
         <s-link href="/app/alerts">Alerts</s-link>
+        <s-link href="/app/health">Health</s-link>
       </ui-nav-menu>
       <Outlet />
     </AppProvider>
