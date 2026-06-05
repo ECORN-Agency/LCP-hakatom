@@ -1,121 +1,28 @@
-import { redirect, Form, useLoaderData } from "react-router";
-import { login } from "../../shopify.server";
-import styles from "./styles.module.css";
+import { redirect } from "react-router";
+
+// Root route. ALWAYS bounces into /app/.
+//
+// History: this file used to render a marketing landing page when there were
+// no Shopify embed parameters. That broke the embedded experience because
+// App Bridge does client-side routing inside the iframe — when a merchant
+// clicked the app name in the sidebar after being on a sub-tab, App Bridge
+// navigated to "/" without shop/host params, our conditional redirect
+// didn't fire, and the public landing rendered inside the embedded iframe.
+//
+// Fix: unconditional redirect. Param-less hits (direct typing, App Store
+// install entry) fall through to /app/, which handles its own auth flow.
+// The marketing copy is preserved at /install for explicit link-outs.
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
-  const shop = url.searchParams.get("shop");
-  const host = url.searchParams.get("host");
-  const embedded = url.searchParams.get("embedded");
-
-  // Embedded Shopify admin can pass any of these. Older flows include `shop`,
-  // newer ones may only include `host` (base64 of shop URL) and `embedded=1`.
-  // Redirect to /app preserving all params so the React Router auth handshake
-  // works regardless of which combination Shopify sends.
-  if (shop || host || embedded === "1") {
-    throw redirect(`/app?${url.searchParams.toString()}`, {
-      headers: {
-        // Stop browsers / Shopify admin from caching the redirect itself —
-        // without this, navigating back into the app via the sidebar can
-        // render the previously-cached HTML instead of following the
-        // redirect, which is the "only works after Cmd+R" symptom.
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-      },
-    });
-  }
-
-  return { showForm: Boolean(login) };
+  throw redirect(`/app?${url.searchParams.toString()}`, {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+    },
+  });
 };
 
-// Same no-cache rule for the public-landing render itself, so we never
-// serve stale embedded-iframe HTML when a merchant comes back to the app.
-export const headers = () => ({
-  "Cache-Control": "no-store, no-cache, must-revalidate",
-});
-
-export default function App() {
-  const { showForm } = useLoaderData();
-
-  return (
-    <div className={styles.page}>
-      <header className={styles.hero}>
-        <p className={styles.eyebrow}>LSP Analizer for Shopify</p>
-        <h1 className={styles.heading}>
-          Know which changes hurt your sales.
-        </h1>
-        <p className={styles.text}>
-          Every theme edit, price move, restock and order is logged
-          automatically. We measure the real impact against your store's
-          normal pattern and flag anything that looks off — so you don't
-          find out from a customer complaint or a quiet day.
-        </p>
-
-        {showForm && (
-          <Form className={styles.form} method="post" action="/auth/login">
-            <label className={styles.label}>
-              <span>Install on your store</span>
-              <input
-                className={styles.input}
-                type="text"
-                name="shop"
-                placeholder="your-store.myshopify.com"
-                autoComplete="off"
-              />
-            </label>
-            <button className={styles.button} type="submit">
-              Install
-            </button>
-          </Form>
-        )}
-      </header>
-
-      <section className={styles.features}>
-        <article className={styles.feature}>
-          <h2 className={styles.featureTitle}>Everything in one Timeline</h2>
-          <p className={styles.featureBody}>
-            Theme publishes, Customizer saves (down to the file), price
-            changes, stock moves, orders and customer-side events all flow
-            into a single feed. Filter by type and time, search by name.
-          </p>
-        </article>
-
-        <article className={styles.feature}>
-          <h2 className={styles.featureTitle}>Compared against your baseline</h2>
-          <p className={styles.featureBody}>
-            For any event, we line up the after-window against the same
-            time-of-day × day-of-week slot over the last 4 weeks. The
-            comparison removes hour-of-day and weekly seasonality, so the
-            delta is actually about the change, not Monday-vs-Saturday noise.
-          </p>
-        </article>
-
-        <article className={styles.feature}>
-          <h2 className={styles.featureTitle}>Early conversion signals</h2>
-          <p className={styles.featureBody}>
-            A Web Pixel feeds storefront events (page views, cart adds,
-            checkouts) back in seconds — long before orders settle. Theme
-            changes that quietly tank conversion show up immediately, not
-            after a slow Sunday.
-          </p>
-        </article>
-
-        <article className={styles.feature}>
-          <h2 className={styles.featureTitle}>Honest, rule-based alerts</h2>
-          <p className={styles.featureBody}>
-            No black-box ML. Email rules with explicit thresholds (label
-            and confidence) tell you when a change crosses the line, and
-            the email shows the exact drivers behind the verdict.
-          </p>
-        </article>
-      </section>
-
-      <footer className={styles.footer}>
-        <p className={styles.footerNote}>
-          LSP Analizer is a research-grade tool. Recommendations are early
-          signals, not causal proof — we tell you what we saw and how
-          confident we are, you decide what to do.
-        </p>
-      </footer>
-    </div>
-  );
+// We never render — the loader always redirects.
+export default function Root() {
+  return null;
 }
