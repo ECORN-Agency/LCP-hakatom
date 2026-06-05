@@ -139,9 +139,15 @@ export const loader = async ({ request }) => {
   const jobCounts = Object.fromEntries(
     jobCountsRaw.map((g) => [g.status, g._count?._all ?? 0]),
   );
-  const jobsByTopic = Object.fromEntries(
-    jobsByTopicRaw.map((g) => [g.topic, g._count?._all ?? 0]),
-  );
+  // Shopify ships webhook topic strings in either "themes/publish" or
+  // "THEMES_PUBLISH" shape depending on version. Our knownTopics list is in
+  // slashed-lowercase form, so normalize stored topics the same way before
+  // building the lookup or the panel will lie that everything is silent.
+  const jobsByTopic: Record<string, number> = {};
+  for (const g of jobsByTopicRaw) {
+    const key = String(g.topic ?? "").toLowerCase().replace(/_/g, "/");
+    jobsByTopic[key] = (jobsByTopic[key] ?? 0) + (g._count?._all ?? 0);
+  }
   const alertDelivery24h = Object.fromEntries(
     alertDelivery24hRaw.map((g) => [g.status, g._count?._all ?? 0]),
   );
@@ -150,8 +156,12 @@ export const loader = async ({ request }) => {
   );
 
   // Webhook subscription health: which subscribed topics had no recent jobs?
+  // IMPORTANT: distinguish "live subscriptions from Shopify" from "what the
+  // app *expects* to be subscribed". If Shopify returns zero we want a loud
+  // warning, not a quiet fallback to the expected list.
+  const hasLiveSubs = subscribedTopicsLive.length > 0;
   const subscribedSet = new Set(
-    (subscribedTopicsLive.length > 0 ? subscribedTopicsLive : SUBSCRIBED_TOPICS).map((t) =>
+    (hasLiveSubs ? subscribedTopicsLive : SUBSCRIBED_TOPICS).map((t) =>
       t.toLowerCase().replace(/_/g, "/"),
     ),
   );
@@ -192,6 +202,7 @@ export const loader = async ({ request }) => {
     },
     oldestChangeAt: oldestChange?.occurredAt ?? null,
     latestChangeAt: latestChange?.occurredAt ?? null,
+    hasLiveSubs,
   };
 };
 
@@ -343,6 +354,11 @@ export default function Health() {
       <s-section heading="Webhooks received per topic (24h)">
         <s-box padding="base" background="base" borderWidth="base" borderColor="base" borderRadius="base">
           <s-stack gap="small">
+            {!d.hasLiveSubs && (
+              <StatusBadge tone="critical">
+                Shopify reports zero active webhook subscriptions for this app. Run `npx shopify app deploy` to re-register them. The list below is what we expect, not what's live.
+              </StatusBadge>
+            )}
             {d.knownTopics.length === 0 ? (
               <s-text color="subdued">No webhook subscriptions visible. Check shopify.app.toml is deployed.</s-text>
             ) : (
