@@ -156,6 +156,20 @@ model AlertDelivery {
   @@index([shop, deliveredAt])
 }
 
+// Latest known list of files in a theme, used to diff against next
+// themes/update so we can tell *which* files merchant changed.
+// Stored as JSON array of { filename, checksumMd5, updatedAt, size } —
+// no file body (keeps the row small even for themes with 1000+ files).
+model ThemeSnapshot {
+  id        String   @id @default(cuid())
+  shop      String
+  themeId   String
+  files     Json
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([shop, themeId])
+}
+
 // Latest known state of a product per shop. Used to compute diffs between
 // successive Shopify products/update webhooks (Shopify sends full state, not
 // a diff — and often sends multiple webhooks for a single merchant edit).

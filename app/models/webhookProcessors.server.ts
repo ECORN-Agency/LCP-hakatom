@@ -17,6 +17,14 @@ import {
   diffSnapshots,
   summarizeDiff,
 } from "./productDiff.server";
+import {
+  fetchThemeFiles,
+  diffThemeFiles,
+  summarizeFileList,
+  type ThemeFile,
+  type ThemeFileDiff,
+} from "./themeDiff.server";
+import { unauthenticated } from "../shopify.server";
 
 export type JobInput = {
   shop: string;
@@ -159,6 +167,8 @@ async function processThemeJob({ shop, topic, webhookId, payload }: JobInput) {
   if (topicLower === "themes/update") {
     const themeName = payload?.name || payload?.theme_name || themeId || "Unknown";
 
+    // If a publish/switch just landed (within 5 min) the file changes are
+    // already attributed to it — skip the standalone update row.
     if (isMainTheme) {
       const recentPublish = await prisma.change.findFirst({
         where: {
@@ -175,27 +185,90 @@ async function processThemeJob({ shop, topic, webhookId, payload }: JobInput) {
       }
     }
 
-    const recent = await prisma.change.findFirst({
+    // Try to pull the current theme file list. Best effort — if it fails
+    // (network, scope, missing session) we still record a generic Change.
+    let fileDiff: ThemeFileDiff | null = null;
+    let nextFiles: ThemeFile[] | null = null;
+    if (themeId) {
+      try {
+        const { admin } = await unauthenticated.admin(shop);
+        nextFiles = await fetchThemeFiles(admin, themeId);
+        const stored = await prisma.themeSnapshot.findUnique({
+          where: { shop_themeId: { shop, themeId } },
+        });
+        fileDiff = diffThemeFiles((stored?.files as ThemeFile[] | null) ?? null, nextFiles);
+        await prisma.themeSnapshot.upsert({
+          where: { shop_themeId: { shop, themeId } },
+          create: { shop, themeId, files: nextFiles as any },
+          update: { files: nextFiles as any },
+        });
+      } catch (err) {
+        log.warn({ err: String(err), themeId }, "couldn't fetch theme files for diff");
+      }
+    }
+
+    const changedNow: string[] = fileDiff
+      ? [...fileDiff.modified, ...fileDiff.added]
+      : [];
+    const removedNow: string[] = fileDiff?.removed ?? [];
+
+    // 1-hour aggregation window: if there's already an open theme_files_updated
+    // Change for this theme in the last hour, merge into it instead of
+    // spawning a new row.
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const open = await prisma.change.findFirst({
       where: {
         shop,
-        type: { in: ["theme_published", "theme_switched", "theme_files_updated"] },
+        type: "theme_files_updated",
         entityId: themeId,
-        occurredAt: { gte: new Date(Date.now() - 60_000) },
+        occurredAt: { gte: oneHourAgo },
       },
       orderBy: { occurredAt: "desc" },
     });
-    if (recent) {
-      log.info({ themeId, suppressedBy: recent.type }, "deduplicated theme_updated");
+
+    if (open) {
+      const cd: any = (open.payload as any)?.changeDetails ?? {};
+      const newCount = (cd.updateCount ?? 1) + 1;
+      const mergedChanged = Array.from(new Set([...(cd.filesChanged ?? []), ...changedNow]));
+      const mergedRemoved = Array.from(new Set([...(cd.filesRemoved ?? []), ...removedNow]));
+
+      const filePart =
+        mergedChanged.length > 0
+          ? ` — ${summarizeFileList(mergedChanged)}`
+          : "";
+      const removedPart =
+        mergedRemoved.length > 0 ? `, ${mergedRemoved.length} removed` : "";
+
+      await prisma.change.update({
+        where: { id: open.id },
+        data: {
+          summary: `Theme updated ${newCount}× (${themeName})${filePart}${removedPart}`,
+          payload: {
+            ...(open.payload as any),
+            changeDetails: {
+              ...cd,
+              themeName,
+              themeId,
+              updateCount: newCount,
+              lastUpdatedAt: new Date(),
+              filesChanged: mergedChanged,
+              filesRemoved: mergedRemoved,
+            },
+          },
+        },
+      });
+      log.info(
+        { themeId, updateCount: newCount, filesAddedNow: changedNow.length, filesRemovedNow: removedNow.length },
+        "theme update aggregated into existing change",
+      );
       return;
     }
 
-    const changes: string[] = [];
-    if (payload?.name) changes.push(`name: ${payload.name}`);
-    if (payload?.role) changes.push(`role: ${payload.role}`);
-    if (payload?.updated_at) changes.push(`updated at: ${new Date(payload.updated_at).toLocaleString()}`);
-    const summary = changes.length > 0
-      ? `Theme updated: ${themeName} (${changes.join(", ")})`
-      : `Theme updated: ${themeName}`;
+    // No open window — create a fresh Change.
+    const filePart =
+      changedNow.length > 0 ? ` — ${summarizeFileList(changedNow)}` : "";
+    const removedPart =
+      removedNow.length > 0 ? `, ${removedNow.length} removed` : "";
 
     await prisma.change.create({
       data: {
@@ -204,15 +277,27 @@ async function processThemeJob({ shop, topic, webhookId, payload }: JobInput) {
         type: "theme_files_updated",
         entityType: "theme",
         entityId: themeId,
-        summary,
+        summary: `Theme updated: ${themeName}${filePart}${removedPart}`,
         payload: {
           ...payload,
-          changeDetails: { themeName, themeId, action: "customize", changes },
+          changeDetails: {
+            themeName,
+            themeId,
+            action: "customize",
+            updateCount: 1,
+            firstUpdatedAt: new Date(),
+            lastUpdatedAt: new Date(),
+            filesChanged: changedNow,
+            filesRemoved: removedNow,
+          },
         },
         occurredAt: new Date(payload?.updated_at || Date.now()),
       },
     });
-    log.info({ themeName, themeId }, "theme files updated");
+    log.info(
+      { themeId, filesChanged: changedNow.length, filesRemoved: removedNow.length },
+      "theme files updated (new window)",
+    );
   }
 }
 
