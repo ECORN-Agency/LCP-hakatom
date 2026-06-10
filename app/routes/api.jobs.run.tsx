@@ -14,7 +14,7 @@ import { logger } from "../logger.server";
 import { drainWebhookJobs } from "../models/workerDrain.server";
 import { bearerMatches } from "../lib/auth.server";
 
-export const action = async ({ request }) => {
+export const action = async ({ request }: { request: Request }) => {
   const auth = request.headers.get("authorization");
 
   if (!bearerMatches(auth, process.env.INTERNAL_SECRET, process.env.CRON_SECRET)) {

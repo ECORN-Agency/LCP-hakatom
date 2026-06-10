@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useFetcher, useRevalidator } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, type HeadersFunction } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
-export const loader = async ({ request }) => {
+export const loader = async ({ request }: { request: Request }) => {
   const { session } = await authenticate.admin(request);
 
   const changes = await prisma.change.findMany({
@@ -18,7 +18,8 @@ export const loader = async ({ request }) => {
 };
 
 export default function Timeline() {
-  const { changes } = useLoaderData();
+  // payload is free-form JSON per change type, so we read it untyped here.
+  const { changes } = useLoaderData() as { changes: any[] };
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
   const shopify = useAppBridge();
@@ -43,7 +44,7 @@ export default function Timeline() {
     }
   }, [fetcher.state, fetcher.data, revalidator, shopify]);
 
-  const toggleRow = (changeId) => {
+  const toggleRow = (changeId: string) => {
     setExpandedRows((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(changeId)) {
@@ -55,8 +56,8 @@ export default function Timeline() {
     });
   };
 
-  const getTypeBadge = (type) => {
-    const typeMap = {
+  const getTypeBadge = (type: string) => {
+    const typeMap: Record<string, string> = {
       theme_published: "Theme published",
       theme_switched: "Theme switched",
       theme_files_updated: "Theme updated",
@@ -73,11 +74,13 @@ export default function Timeline() {
     return typeMap[type] || type;
   };
 
-  const getTypeTone = (type) => {
+  const getTypeTone = (
+    type: string,
+  ): "info" | "success" | "warning" | "caution" | "neutral" => {
     if (type.startsWith("theme_")) return "info";
     if (type.startsWith("orders_")) return "success";
     if (type.startsWith("products_")) return "warning";
-    if (type.startsWith("collections_")) return "attention";
+    if (type.startsWith("collections_")) return "caution";
     return "neutral";
   };
 
@@ -124,7 +127,7 @@ export default function Timeline() {
             borderColor="base"
             borderRadius="base"
           >
-            <s-text alignment="center" color="subdued">
+            <s-text color="subdued">
               No events yet. Publish a theme or add a manual event to get started.
             </s-text>
           </s-box>
@@ -154,8 +157,8 @@ export default function Timeline() {
                   >
                     <s-stack id={`event-row-stack-${change.id}`} gap="base">
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--p-space-4)", width: "100%" }}>
-                        <s-stack id={`event-row-main-${change.id}`} direction="inline" gap="base" alignItems="center" style={{ flex: "1 1 0%", minWidth: 0, overflow: "hidden" }}>
-                          <s-text id={`event-time-${change.id}`} color="subdued" style={{ whiteSpace: "nowrap", flexShrink: 0 }}>
+                        <s-stack id={`event-row-main-${change.id}`} direction="inline" gap="base" alignItems="center" {...{ style: { flex: "1 1 0%", minWidth: 0, overflow: "hidden" } }}>
+                          <s-text id={`event-time-${change.id}`} color="subdued" {...{ style: { whiteSpace: "nowrap", flexShrink: 0 } }}>
                             {occurredAt.toLocaleString("en-US", {
                               year: "numeric",
                               month: "2-digit",
@@ -167,11 +170,11 @@ export default function Timeline() {
                           <s-badge
                             id={`event-type-${change.id}`}
                             tone={getTypeTone(change.type)}
-                            style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+                            {...{ style: { whiteSpace: "nowrap", flexShrink: 0 } }}
                           >
                             {getTypeBadge(change.type)}
                           </s-badge>
-                          <s-text id={`event-summary-${change.id}`} type="strong" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "1 1 0%" }}>
+                          <s-text id={`event-summary-${change.id}`} type="strong" {...{ style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "1 1 0%" } }}>
                             {change.summary}
                           </s-text>
                         </s-stack>
@@ -179,7 +182,7 @@ export default function Timeline() {
                           id={`toggle-details-${change.id}`}
                           variant="secondary"
                           onClick={() => toggleRow(change.id)}
-                          style={{ flex: "0 0 auto" }}
+                          {...{ style: { flex: "0 0 auto" } }}
                         >
                           <span style={{ whiteSpace: "nowrap" }}>
                             {isExpanded ? "Hide details" : "Details"}
@@ -210,7 +213,7 @@ export default function Timeline() {
                               {change.payload?.changeDetails?.priceChanges && change.payload.changeDetails.priceChanges.length > 0 && (
                                 <s-stack gap="small">
                                   <s-text type="strong">Price Changes:</s-text>
-                                  {change.payload.changeDetails.priceChanges.map((pc, idx) => (
+                                  {change.payload.changeDetails.priceChanges.map((pc: any, idx: number) => (
                                     <s-text key={idx} color="subdued">
                                       • {pc.variantTitle}: ${pc.oldPrice} → ${pc.newPrice}
                                       {pc.variantId && ` (Variant ID: ${pc.variantId})`}
@@ -221,7 +224,7 @@ export default function Timeline() {
                               {change.payload?.changeDetails?.variants && change.payload.changeDetails.variants.length > 0 && !change.payload.changeDetails.priceChanges && (
                                 <s-stack gap="small">
                                   <s-text type="strong">Variants:</s-text>
-                                  {change.payload.changeDetails.variants.map((v, idx) => (
+                                  {change.payload.changeDetails.variants.map((v: any, idx: number) => (
                                     <s-text key={idx} color="subdued">
                                       • {v.variantTitle}: ${v.price || "N/A"}
                                       {v.variantId && ` (ID: ${v.variantId})`}
@@ -283,7 +286,7 @@ export default function Timeline() {
                               {change.payload?.line_items && change.payload.line_items.length > 0 && (
                                 <s-stack gap="small">
                                   <s-text type="strong">Line Items ({change.payload.line_items.length}):</s-text>
-                                  {change.payload.line_items.slice(0, 5).map((item, idx) => (
+                                  {change.payload.line_items.slice(0, 5).map((item: any, idx: number) => (
                                     <s-text key={idx} color="subdued">
                                       • {item.title || item.name || "Unknown"} x{item.quantity || 1} - ${item.price || "0.00"}
                                     </s-text>
@@ -374,7 +377,7 @@ export default function Timeline() {
   );
 }
 
-export const headers = (headersArgs) => {
+export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };
 

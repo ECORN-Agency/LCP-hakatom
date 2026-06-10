@@ -1,9 +1,18 @@
 #!/bin/sh
-# Pre-push hook: run the unit suite before anything leaves the machine.
-# Versioned in the repo and wired up via `core.hooksPath=.githooks`
+# Pre-push hook: typecheck + run the unit suite before anything leaves the
+# machine. Versioned in the repo and wired up via `core.hooksPath=.githooks`
 # (see `npm run hooks:install`). Free, no CI service required.
 #
 # Skip in an emergency with:  git push --no-verify
+
+echo "▶ pre-push: typechecking…"
+
+if ! npm run typecheck --silent; then
+  echo ""
+  echo "✗ Typecheck failed — push aborted."
+  echo "  Fix the type errors, or bypass with: git push --no-verify"
+  exit 1
+fi
 
 echo "▶ pre-push: running unit tests…"
 
@@ -14,5 +23,5 @@ if ! npm run test --silent; then
   exit 1
 fi
 
-echo "✓ Tests passed — pushing."
+echo "✓ Typecheck + tests passed — pushing."
 exit 0

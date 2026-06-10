@@ -4,7 +4,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { resetAndReactivatePixel } from "../models/pixelActivation.server";
 
-export const loader = async ({ request }) => {
+export const loader = async ({ request }: { request: Request }) => {
   const { session } = await authenticate.admin(request);
 
   const [rules, recentDeliveries, shopConfig] = await Promise.all([
@@ -23,7 +23,7 @@ export const loader = async ({ request }) => {
   return { rules, recentDeliveries, shopConfig };
 };
 
-export const action = async ({ request }) => {
+export const action = async ({ request }: { request: Request }) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
@@ -78,7 +78,7 @@ export const action = async ({ request }) => {
 };
 
 export default function Alerts() {
-  const { rules, recentDeliveries, shopConfig } = useLoaderData();
+  const { rules, recentDeliveries, shopConfig } = useLoaderData<typeof loader>();
   const createFetcher = useFetcher();
   const toggleFetcher = useFetcher();
   const deleteFetcher = useFetcher();
@@ -110,16 +110,16 @@ export default function Alerts() {
     setDestination("");
   };
 
-  const handleToggle = (id) => {
+  const handleToggle = (id: string) => {
     toggleFetcher.submit({ intent: "toggle", id }, { method: "POST" });
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = (id: string) => {
     if (!confirm("Delete this alert rule?")) return;
     deleteFetcher.submit({ intent: "delete", id }, { method: "POST" });
   };
 
-  const formatWindow = (mins) => {
+  const formatWindow = (mins: number) => {
     if (mins >= 1440) return `${mins / 1440}d`;
     if (mins >= 60) return `${mins / 60}h`;
     return `${mins}m`;
@@ -185,7 +185,6 @@ export default function Alerts() {
               value={destination}
               onInput={(e) => setDestination(e.currentTarget.value)}
               placeholder="alerts@your-domain.com"
-              type="email"
             />
 
             <s-stack gap="small">
@@ -250,7 +249,7 @@ export default function Alerts() {
                   </s-button>
                 ))}
               </s-stack>
-              <s-text color="subdued" type="subdued">
+              <s-text color="subdued">
                 Should be ≤ the comparison window so there's after-event data when we
                 evaluate.
               </s-text>
@@ -274,7 +273,7 @@ export default function Alerts() {
       <s-section id="alerts-rules-section" heading={`Active rules (${rules.length})`}>
         {rules.length === 0 ? (
           <s-box padding="large" background="base" borderWidth="base" borderColor="base" borderRadius="base">
-            <s-text alignment="center" color="subdued">
+            <s-text color="subdued">
               No alert rules yet. Add one above to start receiving notifications.
             </s-text>
           </s-box>
@@ -322,7 +321,7 @@ export default function Alerts() {
       <s-section id="alerts-deliveries-section" heading="Recent deliveries">
         {recentDeliveries.length === 0 ? (
           <s-box padding="large" background="base" borderWidth="base" borderColor="base" borderRadius="base">
-            <s-text alignment="center" color="subdued">
+            <s-text color="subdued">
               No alerts have fired yet. Once an event triggers a matching recommendation, it will land here.
             </s-text>
           </s-box>

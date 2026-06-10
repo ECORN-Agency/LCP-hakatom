@@ -55,7 +55,7 @@ export async function fetchThemeFiles(
   let after: string | null = null;
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    const data = await graphqlWithRetry<any>(
+    const data: any = await graphqlWithRetry<any>(
       admin,
       THEME_FILES_QUERY,
       { themeId: gid, first: PAGE_SIZE, after },

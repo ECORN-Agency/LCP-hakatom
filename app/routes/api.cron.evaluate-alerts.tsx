@@ -21,7 +21,7 @@ import { bearerMatches } from "../lib/auth.server";
 // they're stale.
 const MAX_LOOKBACK_HOURS = 6;
 
-export const loader = async ({ request }) => {
+export const loader = async ({ request }: { request: Request }) => {
   // Vercel Cron requests carry an Authorization: Bearer <CRON_SECRET> header.
   // We require it so the endpoint isn't a free DoS target.
   const auth = request.headers.get("authorization");
@@ -216,8 +216,8 @@ export const loader = async ({ request }) => {
   return Response.json({ ok: true, ruleCount: enabledRules.length, sent, skipped, errors });
 };
 
-function renderAlertHtml(change, rec, metrics, rule) {
-  const driverLi = rec.drivers.map((d) => `<li style="margin: 2px 0;">${escapeHtml(d)}</li>`).join("");
+function renderAlertHtml(change: any, rec: any, metrics: any, rule: any) {
+  const driverLi = rec.drivers.map((d: string) => `<li style="margin: 2px 0;">${escapeHtml(d)}</li>`).join("");
   return `
     <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 560px;">
       <h2 style="color: #b00020; margin-bottom: 4px;">${escapeHtml(rec.text)}</h2>
@@ -239,7 +239,7 @@ function renderAlertHtml(change, rec, metrics, rule) {
   `.trim();
 }
 
-function renderAlertText(change, rec, metrics, rule) {
+function renderAlertText(change: any, rec: any, metrics: any, rule: any) {
   const lines = [
     rec.text,
     `Confidence: ${rec.confidence}`,
@@ -250,7 +250,7 @@ function renderAlertText(change, rec, metrics, rule) {
     `Shop: ${change.shop}`,
     "",
     "Drivers:",
-    ...rec.drivers.map((d) => `  - ${d}`),
+    ...rec.drivers.map((d: string) => `  - ${d}`),
     "",
     `Rule: ${rule.minLabel} / ${rule.minConfidence}+ confidence, ${rule.windowMinutes}m window`,
   ];

@@ -19,7 +19,7 @@ import { logger } from "../logger.server";
 // blow up the main loader with 4 weeks × W minutes of bucket queries for
 // every event in the list.
 
-export const loader = async ({ request }) => {
+export const loader = async ({ request }: { request: Request }) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
 
