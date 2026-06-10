@@ -274,8 +274,53 @@ production-URL в Partner Dashboard.
 | `npm run start` | Serve `./build/` |
 | `npm run typecheck` | RR typegen + `tsc --noEmit` |
 | `npm run lint` | ESLint |
+| `npm run test` | Vitest — unit-сьют (один прогон) |
+| `npm run test:watch` | Vitest в watch-режиме |
+| `npm run hooks:install` | Включить git pre-push хук (см. ниже) |
 | `npx prisma studio` | Visual DB browser |
 | `node scripts/clear-db.js` | Wipe Change + MetricBucket (dev only) |
+
+---
+
+## Тесты
+
+Unit-тесты на [Vitest](https://vitest.dev). Покрывают **чистую логику ядра** —
+ту, где баг тихо искажает вердикт для мерчанта, а не падает с ошибкой:
+
+| Файл | Что проверяет |
+|---|---|
+| `app/models/recommendation.test.ts` | rule engine: label / strength / confidence / tone, conversion-override для theme-событий, тексты по направлению цены, drivers |
+| `app/models/productDiff.test.ts` | проекция webhook-payload, дедуп ghost-апдейтов, диффы цены / стока / статуса |
+| `app/models/themeDiff.test.ts` | added / modified / removed файлы, checksum vs fallback на `updatedAt` |
+| `app/models/baseline.test.ts` | rolling baseline: усреднение по неделям, пропуск пустых, null при отсутствии истории, AOV edge-cases (Prisma замокан) |
+| `app/models/metricsBuckets.test.ts` | UTC-нормализация в 10-минутные бакеты, иммутабельность входа |
+
+```bash
+npm run test          # один прогон (~1s)
+npm run test:watch    # перезапуск при изменениях
+```
+
+Конфиг — `vitest.config.ts` (отдельный от `vite.config.js`: без
+`reactRouter()`-плагина, node-окружение). Тестируется только pure-логика без
+сети и БД — серверные зависимости (`prisma`, `logger`, GraphQL-wrapper)
+мокаются через `vi.mock`.
+
+### Pre-push git hook
+
+Тесты гоняются автоматически **перед каждым `git push`** — бесплатно, без
+CI-сервиса. Хук версионируется в репозитории (`.githooks/pre-push`) и
+подключается через `core.hooksPath`. Так как git не клонирует хуки сам,
+каждый разработчик после `git clone` выполняет один раз:
+
+```bash
+npm run hooks:install   # = git config core.hooksPath .githooks
+```
+
+Если push красный — он блокируется. Обойти разово (например, WIP-ветка):
+
+```bash
+git push --no-verify
+```
 
 ---
 
@@ -476,6 +521,10 @@ log.info({ shop, topic }, "received");
 - **Multi-shop fan-out** — когда `pollAllActiveShops` начнёт упираться
   в Vercel timeout (~30-50 shops), разбить на per-shop jobs через
   Inngest / QStash.
+- **Облачный CI** — пока тесты гоняются локальным pre-push хуком (см.
+  раздел «Тесты»), т.к. Actions в организации требуют биллинг. Когда
+  будет доступно — добавить `.github/workflows/ci.yml` (lint + typecheck
+  + test на каждый PR) как backstop к локальному хуку.
 
 ---
 
