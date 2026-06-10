@@ -57,7 +57,7 @@ export async function fetchOrdersStats(
   let partial = false;
 
   while (true) {
-    const data = await graphqlWithRetry<any>(
+    const data: any = await graphqlWithRetry<any>(
       admin,
       ORDERS_QUERY,
       { first: PAGE_SIZE, after, query: queryFilter },
@@ -66,7 +66,7 @@ export async function fetchOrdersStats(
 
     if (data.errors && data.errors.length > 0) {
       throw new Error(
-        `fetchOrdersStats GraphQL errors: ${data.errors.map((e) => e.message).join("; ")}`,
+        `fetchOrdersStats GraphQL errors: ${data.errors.map((e: any) => e.message).join("; ")}`,
       );
     }
 
@@ -96,7 +96,12 @@ export async function fetchOrdersStats(
   return { orders, revenue, partial };
 }
 
-export async function upsertBucketMetric(shop, bucketAtUTC, orders, revenue) {
+export async function upsertBucketMetric(
+  shop: string,
+  bucketAtUTC: Date,
+  orders: number,
+  revenue: number,
+) {
   await prisma.metricBucket.upsert({
     where: {
       shop_bucketAt: {
@@ -117,7 +122,7 @@ export async function upsertBucketMetric(shop, bucketAtUTC, orders, revenue) {
   });
 }
 
-export async function getBucketMetrics(shop, fromISO, toISO) {
+export async function getBucketMetrics(shop: string, fromISO: string, toISO: string) {
   const fromDate = new Date(fromISO);
   const toDate = new Date(toISO);
 

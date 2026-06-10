@@ -40,14 +40,14 @@ const CORS_HEADERS = {
 };
 
 // CORS preflight from the sandbox iframe.
-export const loader = async ({ request }) => {
+export const loader = async ({ request }: { request: Request }) => {
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
   return new Response("Method not allowed", { status: 405, headers: CORS_HEADERS });
 };
 
-export const action = async ({ request }) => {
+export const action = async ({ request }: { request: Request }) => {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405, headers: CORS_HEADERS });
   }

@@ -3,6 +3,50 @@
 // so this file must NOT import prisma, admin client, or anything server-only.
 // Do NOT add the ".server" suffix back — React Router would strip it from the client bundle.
 
+export type PriceDirection = "up" | "down" | "mixed";
+
+export type EventContext = {
+  priceDirection?: PriceDirection;
+  [key: string]: unknown;
+};
+
+export type RecommendationLabel = "positive" | "negative" | "mixed" | "neutral";
+export type RecommendationStrength = "strong" | "moderate";
+export type RecommendationConfidence = "low" | "medium" | "high";
+export type RecommendationTone = "success" | "critical" | "attention" | "warning" | "info";
+
+export type BuildRecommendationInput = {
+  eventType?: string;
+  eventContext?: EventContext;
+  windowMinutes?: number;
+  revenueDeltaPct: number | null;
+  ordersDeltaPct: number | null;
+  aovDeltaPct: number | null;
+  conversionDeltaPct?: number | null;
+  pageViewsDeltaPct?: number | null;
+  partialData: boolean;
+  overlappingEvents: number;
+  coverageBefore: number;
+  coverageAfter: number;
+  expectedBuckets: number;
+};
+
+export type Recommendation = {
+  label: RecommendationLabel;
+  strength: RecommendationStrength;
+  confidence: RecommendationConfidence;
+  tone: RecommendationTone;
+  text: string;
+  drivers: string[];
+};
+
+type ImpactTier =
+  | "strong_positive"
+  | "positive"
+  | "neutral"
+  | "negative"
+  | "strong_negative";
+
 export function buildRecommendation({
   eventType,
   // Optional event-specific extras. Currently used:
@@ -24,7 +68,7 @@ export function buildRecommendation({
   coverageBefore,
   coverageAfter,
   expectedBuckets,
-}) {
+}: BuildRecommendationInput): Recommendation {
   let confidence = 100;
 
   if (revenueDeltaPct !== null && ordersDeltaPct !== null) {
@@ -60,7 +104,7 @@ export function buildRecommendation({
   // Floor so we never report negative confidence numbers downstream.
   confidence = Math.max(0, confidence);
 
-  let confidenceLevel = "high";
+  let confidenceLevel: RecommendationConfidence = "high";
   if (confidence < 60) {
     confidenceLevel = "low";
   } else if (confidence < 80) {
@@ -70,8 +114,8 @@ export function buildRecommendation({
   const revenueTier = getImpactTier(revenueDeltaPct);
   const ordersTier = getImpactTier(ordersDeltaPct);
 
-  let label = "neutral";
-  let strength = "moderate";
+  let label: RecommendationLabel = "neutral";
+  let strength: RecommendationStrength = "moderate";
 
   if (revenueDeltaPct !== null && ordersDeltaPct !== null) {
     if (revenueTier === "strong_positive" && ordersTier === "strong_positive") {
@@ -117,7 +161,7 @@ export function buildRecommendation({
     }
   }
 
-  let tone = "info";
+  let tone: RecommendationTone = "info";
   if (label === "positive" && strength === "strong") {
     tone = "success";
   } else if (label === "negative" && strength === "strong") {
@@ -183,7 +227,7 @@ export function buildRecommendation({
   };
 }
 
-function getImpactTier(pct) {
+function getImpactTier(pct: number | null): ImpactTier {
   if (pct === null) return "neutral";
   if (pct >= 10) return "strong_positive";
   if (pct >= 3) return "positive";
@@ -192,7 +236,12 @@ function getImpactTier(pct) {
   return "neutral";
 }
 
-function getRecommendationText(eventType, label, strength, eventContext = {}) {
+function getRecommendationText(
+  eventType: string | undefined,
+  label: RecommendationLabel,
+  strength: RecommendationStrength,
+  eventContext: EventContext = {},
+): string {
   let text = "";
 
   if (eventType === "theme_published" || eventType === "theme_switched") {
@@ -281,7 +330,7 @@ function getRecommendationText(eventType, label, strength, eventContext = {}) {
   return `Early signal: ${text}`;
 }
 
-export function formatWindowLabel(minutes) {
+export function formatWindowLabel(minutes: number): string {
   if (minutes >= 1440) {
     const days = minutes / 1440;
     return Number.isInteger(days) ? `${days}d window` : `${days.toFixed(1)}d window`;
@@ -305,8 +354,20 @@ function buildDrivers({
   partialData,
   overlappingEvents,
   windowMinutes,
-}) {
-  const drivers = [];
+}: {
+  revenueDeltaPct: number | null;
+  ordersDeltaPct: number | null;
+  aovDeltaPct: number | null;
+  conversionDeltaPct: number | null;
+  pageViewsDeltaPct: number | null;
+  coverageBefore: number;
+  coverageAfter: number;
+  expectedBuckets: number;
+  partialData: boolean;
+  overlappingEvents: number;
+  windowMinutes: number;
+}): string[] {
+  const drivers: string[] = [];
   const windowLabel = formatWindowLabel(windowMinutes);
 
   // Storefront signals first — they're the leading indicator.
