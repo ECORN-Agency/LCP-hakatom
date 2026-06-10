@@ -17,6 +17,11 @@
 
 import prisma from "../db.server";
 import { logger } from "../logger.server";
+import {
+  parseAmount,
+  isAcceptableTimestamp,
+  dataWithinSizeLimit,
+} from "../lib/pixelParse";
 
 const ALLOWED_EVENTS = new Set([
   "page_viewed",
@@ -73,6 +78,14 @@ export const action = async ({ request }) => {
     );
   }
 
+  // Cap the stored blob — endpoint is unauthenticated. (M3)
+  if (!dataWithinSizeLimit(data)) {
+    return Response.json(
+      { error: "data too large" },
+      { status: 413, headers: CORS_HEADERS },
+    );
+  }
+
   // Validate shop is installed.
   const session = await prisma.session.findFirst({ where: { shop } });
   if (!session) {
@@ -88,16 +101,20 @@ export const action = async ({ request }) => {
     );
   }
 
+  // Reject timestamps implausibly far from now (replay / junk). (M3)
+  if (!isAcceptableTimestamp(occurredAt)) {
+    logger.warn({ shop, eventName, occurredAt: occurredAtRaw }, "pixel event timestamp out of range");
+    return Response.json(
+      { error: "occurredAt out of acceptable range" },
+      { status: 400, headers: CORS_HEADERS },
+    );
+  }
+
   // Pull out hot fields for indexing; keep the rest in `data` JSON.
   const productId = data?.productId ? String(data.productId) : null;
   const variantId = data?.variantId ? String(data.variantId) : null;
-  const totalAmount = Number.isFinite(data?.totalAmount)
-    ? Number(data.totalAmount)
-    : Number.isFinite(data?.totalPrice)
-      ? Number(data.totalPrice)
-      : Number.isFinite(data?.price)
-        ? Number(data.price)
-        : null;
+  // Accepts numeric strings too — Shopify often sends money as strings. (M4)
+  const totalAmount = parseAmount(data);
 
   await prisma.pixelEvent.create({
     data: {

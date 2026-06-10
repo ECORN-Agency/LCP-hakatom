@@ -105,6 +105,20 @@ describe("processOrderJob — create/updated dedup", () => {
     expect(prismaMock.change.create).toHaveBeenCalledTimes(1);
     expect(prismaMock.change.create.mock.calls[0][0].data.type).toBe("orders_create");
   });
+
+  it("anchors the dedup window on the order's created_at, not Date.now() (M1)", async () => {
+    const createdAt = "2020-01-01T00:00:00.000Z"; // far in the past
+    await processWebhookJob({
+      shop: "s",
+      topic: "orders/create",
+      webhookId: "w",
+      payload: { id: 7, order_number: 1007, created_at: createdAt },
+    });
+    const where = prismaMock.change.findFirst.mock.calls[0][0].where;
+    // Window = created_at ± 10s, independent of wall clock.
+    expect(where.occurredAt.gte.toISOString()).toBe("2019-12-31T23:59:50.000Z");
+    expect(where.occurredAt.lte.toISOString()).toBe("2020-01-01T00:00:10.000Z");
+  });
 });
 
 // --- Products -----------------------------------------------------------
@@ -228,6 +242,18 @@ describe("processThemeJob", () => {
       payload: { id: 99, role: "main", name: "Dawn" },
     });
     expect(prismaMock.change.create).not.toHaveBeenCalled();
+  });
+
+  it("anchors the publish dedup window on the event's updated_at (M1)", async () => {
+    await processWebhookJob({
+      shop: "s",
+      topic: "themes/publish",
+      webhookId: "w",
+      payload: { id: 99, role: "main", name: "Dawn", updated_at: "2020-01-01T00:00:00.000Z" },
+    });
+    const where = prismaMock.change.findFirst.mock.calls[0][0].where;
+    expect(where.occurredAt.gte.toISOString()).toBe("2019-12-31T23:59:00.000Z"); // -60s
+    expect(where.occurredAt.lte.toISOString()).toBe("2020-01-01T00:01:00.000Z"); // +60s
   });
 
   it("suppresses the themes/update double-fire right after a publish", async () => {

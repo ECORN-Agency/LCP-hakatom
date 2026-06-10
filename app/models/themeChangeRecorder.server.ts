@@ -17,6 +17,7 @@ import {
   type ThemeFile,
 } from "./themeDiff.server";
 import { unauthenticated } from "../shopify.server";
+import { withAdvisoryLock } from "../lib/dbLock.server";
 
 const MAIN_THEME_QUERY = `#graphql
   query MainTheme {
@@ -118,103 +119,108 @@ export async function pollThemeChangesForShop(shop: string): Promise<PollResult>
   // Timeline row.
   const changedNow = [...fileDiff.modified, ...fileDiff.added];
   const removedNow = fileDiff.removed;
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  // Serialize the find-or-create aggregation per (shop, themeId) — the webhook
+  // processor and a concurrent poll (or two overlapping polls) would otherwise
+  // race here and duplicate the row or lose a merge. (H3)
+  return withAdvisoryLock(`theme-agg:${shop}:${themeId}`, async (tx): Promise<PollResult> => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
-  const open = await prisma.change.findFirst({
-    where: {
-      shop,
-      type: "theme_files_updated",
-      entityId: themeId,
-      occurredAt: { gte: oneHourAgo },
-    },
-    orderBy: { occurredAt: "desc" },
-  });
+    const open = await tx.change.findFirst({
+      where: {
+        shop,
+        type: "theme_files_updated",
+        entityId: themeId,
+        occurredAt: { gte: oneHourAgo },
+      },
+      orderBy: { occurredAt: "desc" },
+    });
 
-  if (open) {
-    const cd: any = (open.payload as any)?.changeDetails ?? {};
-    const newCount = (cd.updateCount ?? 1) + 1;
-    const mergedChanged = Array.from(new Set([...(cd.filesChanged ?? []), ...changedNow]));
-    const mergedRemoved = Array.from(new Set([...(cd.filesRemoved ?? []), ...removedNow]));
+    if (open) {
+      const cd: any = (open.payload as any)?.changeDetails ?? {};
+      const newCount = (cd.updateCount ?? 1) + 1;
+      const mergedChanged = Array.from(new Set([...(cd.filesChanged ?? []), ...changedNow]));
+      const mergedRemoved = Array.from(new Set([...(cd.filesRemoved ?? []), ...removedNow]));
 
-    const filePart = mergedChanged.length > 0 ? ` — ${summarizeFileList(mergedChanged)}` : "";
-    const removedPart = mergedRemoved.length > 0 ? `, ${mergedRemoved.length} removed` : "";
+      const filePart = mergedChanged.length > 0 ? ` — ${summarizeFileList(mergedChanged)}` : "";
+      const removedPart = mergedRemoved.length > 0 ? `, ${mergedRemoved.length} removed` : "";
 
-    await prisma.change.update({
-      where: { id: open.id },
-      data: {
-        summary: `Theme updated ${newCount}× (${themeName})${filePart}${removedPart}`,
-        payload: {
-          ...(open.payload as any),
-          changeDetails: {
-            ...cd,
-            themeName,
-            themeId,
-            updateCount: newCount,
-            lastUpdatedAt: new Date(),
-            filesChanged: mergedChanged,
-            filesRemoved: mergedRemoved,
+      await tx.change.update({
+        where: { id: open.id },
+        data: {
+          summary: `Theme updated ${newCount}× (${themeName})${filePart}${removedPart}`,
+          payload: {
+            ...(open.payload as any),
+            changeDetails: {
+              ...cd,
+              themeName,
+              themeId,
+              updateCount: newCount,
+              lastUpdatedAt: new Date(),
+              filesChanged: mergedChanged,
+              filesRemoved: mergedRemoved,
+            },
           },
         },
+      });
+      log.info(
+        { themeId, updateCount: newCount, filesAddedNow: changedNow.length, filesRemovedNow: removedNow.length },
+        "theme update aggregated (poll)",
+      );
+      return {
+        ok: true,
+        shop,
+        themeId,
+        reason: "aggregated",
+        filesChanged: changedNow.length,
+        filesRemoved: removedNow.length,
+      };
+    }
+
+    const filePart = changedNow.length > 0 ? ` — ${summarizeFileList(changedNow)}` : "";
+    const removedPart = removedNow.length > 0 ? `, ${removedNow.length} removed` : "";
+
+    await tx.change.create({
+      data: {
+        // Poll-sourced events have no Shopify X-Shopify-Webhook-Id, so use a
+        // synthetic key that still satisfies the unique constraint.
+        webhookId: `poll:${shop}:${themeId}:${Date.now()}`,
+        shop,
+        type: "theme_files_updated",
+        entityType: "theme",
+        entityId: themeId,
+        summary: `Theme updated: ${themeName}${filePart}${removedPart}`,
+        payload: {
+          source: "poll",
+          themeId,
+          themeName,
+          changeDetails: {
+            themeName,
+            themeId,
+            action: "customize",
+            source: "poll",
+            updateCount: 1,
+            firstUpdatedAt: new Date(),
+            lastUpdatedAt: new Date(),
+            filesChanged: changedNow,
+            filesRemoved: removedNow,
+          },
+        },
+        occurredAt: new Date(),
       },
     });
     log.info(
-      { themeId, updateCount: newCount, filesAddedNow: changedNow.length, filesRemovedNow: removedNow.length },
-      "theme update aggregated (poll)",
+      { themeId, filesChanged: changedNow.length, filesRemoved: removedNow.length },
+      "theme files updated (new poll window)",
     );
     return {
       ok: true,
       shop,
       themeId,
-      reason: "aggregated",
+      reason: "new_change",
       filesChanged: changedNow.length,
       filesRemoved: removedNow.length,
     };
-  }
-
-  const filePart = changedNow.length > 0 ? ` — ${summarizeFileList(changedNow)}` : "";
-  const removedPart = removedNow.length > 0 ? `, ${removedNow.length} removed` : "";
-
-  await prisma.change.create({
-    data: {
-      // Poll-sourced events have no Shopify X-Shopify-Webhook-Id, so use a
-      // synthetic key that still satisfies the unique constraint.
-      webhookId: `poll:${shop}:${themeId}:${Date.now()}`,
-      shop,
-      type: "theme_files_updated",
-      entityType: "theme",
-      entityId: themeId,
-      summary: `Theme updated: ${themeName}${filePart}${removedPart}`,
-      payload: {
-        source: "poll",
-        themeId,
-        themeName,
-        changeDetails: {
-          themeName,
-          themeId,
-          action: "customize",
-          source: "poll",
-          updateCount: 1,
-          firstUpdatedAt: new Date(),
-          lastUpdatedAt: new Date(),
-          filesChanged: changedNow,
-          filesRemoved: removedNow,
-        },
-      },
-      occurredAt: new Date(),
-    },
   });
-  log.info(
-    { themeId, filesChanged: changedNow.length, filesRemoved: removedNow.length },
-    "theme files updated (new poll window)",
-  );
-  return {
-    ok: true,
-    shop,
-    themeId,
-    reason: "new_change",
-    filesChanged: changedNow.length,
-    filesRemoved: removedNow.length,
-  };
 }
 
 export async function pollAllActiveShops(): Promise<PollResult[]> {

@@ -25,6 +25,7 @@ import {
   type ThemeFileDiff,
 } from "./themeDiff.server";
 import { unauthenticated } from "../shopify.server";
+import { withAdvisoryLock } from "../lib/dbLock.server";
 
 export type JobInput = {
   shop: string;
@@ -32,6 +33,12 @@ export type JobInput = {
   webhookId: string;
   payload: any;
 };
+
+// Dedup half-windows, measured around the EVENT's own timestamp (not wall
+// clock). See M1 in docs/code-review-2026-06.md.
+const DEDUP_WINDOW_MS = 10_000; // orders create↔updated double-fire
+const THEME_PUBLISH_DEDUP_MS = 60_000; // any recent theme change near a publish
+const THEME_UPDATE_DEDUP_MS = 30_000; // publish/switch double-fire vs real edit
 
 // Shopify ships webhook topic strings in different shapes across API versions
 // and across the various SDKs (sometimes "themes/publish", sometimes
@@ -80,6 +87,15 @@ async function processThemeJob({ shop, topic, webhookId, payload }: JobInput) {
 
   const themeId = payload?.id ? String(payload.id) : null;
 
+  // Event time of THIS theme change — used to anchor dedup windows so they
+  // keep working under delayed (cron-backstop) processing. (M1)
+  const themeEventTime =
+    payload?.updated_at && !Number.isNaN(new Date(payload.updated_at).getTime())
+      ? new Date(payload.updated_at)
+      : payload?.created_at && !Number.isNaN(new Date(payload.created_at).getTime())
+        ? new Date(payload.created_at)
+        : new Date();
+
   if (topicLower === "themes/publish") {
     const themeName = payload?.name || payload?.theme_name || themeId || "Unknown";
 
@@ -88,7 +104,10 @@ async function processThemeJob({ shop, topic, webhookId, payload }: JobInput) {
         shop,
         type: { in: ["theme_published", "theme_switched", "theme_files_updated"] },
         entityId: themeId,
-        occurredAt: { gte: new Date(Date.now() - 60_000) },
+        occurredAt: {
+          gte: new Date(themeEventTime.getTime() - THEME_PUBLISH_DEDUP_MS),
+          lte: new Date(themeEventTime.getTime() + THEME_PUBLISH_DEDUP_MS),
+        },
       },
       orderBy: { occurredAt: "desc" },
     });
@@ -179,7 +198,10 @@ async function processThemeJob({ shop, topic, webhookId, payload }: JobInput) {
           shop,
           type: { in: ["theme_published", "theme_switched"] },
           entityId: themeId,
-          occurredAt: { gte: new Date(Date.now() - 30_000) },
+          occurredAt: {
+            gte: new Date(themeEventTime.getTime() - THEME_UPDATE_DEDUP_MS),
+            lte: new Date(themeEventTime.getTime() + THEME_UPDATE_DEDUP_MS),
+          },
         },
         orderBy: { occurredAt: "desc" },
       });
@@ -218,90 +240,94 @@ async function processThemeJob({ shop, topic, webhookId, payload }: JobInput) {
 
     // 1-hour aggregation window: if there's already an open theme_files_updated
     // Change for this theme in the last hour, merge into it instead of
-    // spawning a new row.
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const open = await prisma.change.findFirst({
-      where: {
-        shop,
-        type: "theme_files_updated",
-        entityId: themeId,
-        occurredAt: { gte: oneHourAgo },
-      },
-      orderBy: { occurredAt: "desc" },
-    });
+    // spawning a new row. Serialized per (shop, themeId) with an advisory lock
+    // so a concurrent poll / webhook can't both find-or-create and produce a
+    // duplicate row or lose a merge. (H3)
+    await withAdvisoryLock(`theme-agg:${shop}:${themeId}`, async (tx) => {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const open = await tx.change.findFirst({
+        where: {
+          shop,
+          type: "theme_files_updated",
+          entityId: themeId,
+          occurredAt: { gte: oneHourAgo },
+        },
+        orderBy: { occurredAt: "desc" },
+      });
 
-    if (open) {
-      const cd: any = (open.payload as any)?.changeDetails ?? {};
-      const newCount = (cd.updateCount ?? 1) + 1;
-      const mergedChanged = Array.from(new Set([...(cd.filesChanged ?? []), ...changedNow]));
-      const mergedRemoved = Array.from(new Set([...(cd.filesRemoved ?? []), ...removedNow]));
+      if (open) {
+        const cd: any = (open.payload as any)?.changeDetails ?? {};
+        const newCount = (cd.updateCount ?? 1) + 1;
+        const mergedChanged = Array.from(new Set([...(cd.filesChanged ?? []), ...changedNow]));
+        const mergedRemoved = Array.from(new Set([...(cd.filesRemoved ?? []), ...removedNow]));
 
-      const filePart =
-        mergedChanged.length > 0
-          ? ` — ${summarizeFileList(mergedChanged)}`
-          : "";
-      const removedPart =
-        mergedRemoved.length > 0 ? `, ${mergedRemoved.length} removed` : "";
+        const filePart =
+          mergedChanged.length > 0
+            ? ` — ${summarizeFileList(mergedChanged)}`
+            : "";
+        const removedPart =
+          mergedRemoved.length > 0 ? `, ${mergedRemoved.length} removed` : "";
 
-      await prisma.change.update({
-        where: { id: open.id },
-        data: {
-          summary: `Theme updated ${newCount}× (${themeName})${filePart}${removedPart}`,
-          payload: {
-            ...(open.payload as any),
-            changeDetails: {
-              ...cd,
-              themeName,
-              themeId,
-              updateCount: newCount,
-              lastUpdatedAt: new Date(),
-              filesChanged: mergedChanged,
-              filesRemoved: mergedRemoved,
+        await tx.change.update({
+          where: { id: open.id },
+          data: {
+            summary: `Theme updated ${newCount}× (${themeName})${filePart}${removedPart}`,
+            payload: {
+              ...(open.payload as any),
+              changeDetails: {
+                ...cd,
+                themeName,
+                themeId,
+                updateCount: newCount,
+                lastUpdatedAt: new Date(),
+                filesChanged: mergedChanged,
+                filesRemoved: mergedRemoved,
+              },
             },
           },
+        });
+        log.info(
+          { themeId, updateCount: newCount, filesAddedNow: changedNow.length, filesRemovedNow: removedNow.length },
+          "theme update aggregated into existing change",
+        );
+        return;
+      }
+
+      // No open window — create a fresh Change.
+      const filePart =
+        changedNow.length > 0 ? ` — ${summarizeFileList(changedNow)}` : "";
+      const removedPart =
+        removedNow.length > 0 ? `, ${removedNow.length} removed` : "";
+
+      await tx.change.create({
+        data: {
+          webhookId,
+          shop,
+          type: "theme_files_updated",
+          entityType: "theme",
+          entityId: themeId,
+          summary: `Theme updated: ${themeName}${filePart}${removedPart}`,
+          payload: {
+            ...payload,
+            changeDetails: {
+              themeName,
+              themeId,
+              action: "customize",
+              updateCount: 1,
+              firstUpdatedAt: new Date(),
+              lastUpdatedAt: new Date(),
+              filesChanged: changedNow,
+              filesRemoved: removedNow,
+            },
+          },
+          occurredAt: new Date(payload?.updated_at || Date.now()),
         },
       });
       log.info(
-        { themeId, updateCount: newCount, filesAddedNow: changedNow.length, filesRemovedNow: removedNow.length },
-        "theme update aggregated into existing change",
+        { themeId, filesChanged: changedNow.length, filesRemoved: removedNow.length },
+        "theme files updated (new window)",
       );
-      return;
-    }
-
-    // No open window — create a fresh Change.
-    const filePart =
-      changedNow.length > 0 ? ` — ${summarizeFileList(changedNow)}` : "";
-    const removedPart =
-      removedNow.length > 0 ? `, ${removedNow.length} removed` : "";
-
-    await prisma.change.create({
-      data: {
-        webhookId,
-        shop,
-        type: "theme_files_updated",
-        entityType: "theme",
-        entityId: themeId,
-        summary: `Theme updated: ${themeName}${filePart}${removedPart}`,
-        payload: {
-          ...payload,
-          changeDetails: {
-            themeName,
-            themeId,
-            action: "customize",
-            updateCount: 1,
-            firstUpdatedAt: new Date(),
-            lastUpdatedAt: new Date(),
-            filesChanged: changedNow,
-            filesRemoved: removedNow,
-          },
-        },
-        occurredAt: new Date(payload?.updated_at || Date.now()),
-      },
     });
-    log.info(
-      { themeId, filesChanged: changedNow.length, filesRemoved: removedNow.length },
-      "theme files updated (new window)",
-    );
   }
 }
 
@@ -422,13 +448,23 @@ async function processOrderJob({ shop, topic, webhookId, payload }: JobInput) {
   const changeType = topic.replace(/\//g, "_").toLowerCase();
   const entityId = payload?.id ? String(payload.id) : null;
 
+  // Anchor dedup on the ORDER's created_at — identical for the create and
+  // updated events of the same order — not on Date.now(). Keeps create↔updated
+  // dedup working even when jobs are processed late (daily cron backstop),
+  // where a wall-clock "recent" window would silently miss the sibling. (M1)
+  const orderCreatedAt = payload?.created_at && !Number.isNaN(new Date(payload.created_at).getTime())
+    ? new Date(payload.created_at)
+    : new Date();
+  const dedupLo = new Date(orderCreatedAt.getTime() - DEDUP_WINDOW_MS);
+  const dedupHi = new Date(orderCreatedAt.getTime() + DEDUP_WINDOW_MS);
+
   if (entityId && changeType === "orders_updated") {
     const recentCreate = await prisma.change.findFirst({
       where: {
         shop,
         type: "orders_create",
         entityId,
-        occurredAt: { gte: new Date(Date.now() - 10_000) },
+        occurredAt: { gte: dedupLo, lte: dedupHi },
       },
       orderBy: { occurredAt: "desc" },
     });
@@ -444,7 +480,7 @@ async function processOrderJob({ shop, topic, webhookId, payload }: JobInput) {
         shop,
         type: "orders_updated",
         entityId,
-        occurredAt: { gte: new Date(Date.now() - 10_000) },
+        occurredAt: { gte: dedupLo, lte: dedupHi },
       },
       orderBy: { occurredAt: "desc" },
     });
@@ -452,10 +488,6 @@ async function processOrderJob({ shop, topic, webhookId, payload }: JobInput) {
       await prisma.change.delete({ where: { id: recentUpdated.id } }).catch(() => {});
     }
   }
-
-  const orderCreatedAt = payload?.created_at && !Number.isNaN(new Date(payload.created_at).getTime())
-    ? new Date(payload.created_at)
-    : new Date();
 
   const summary = changeType === "orders_create"
     ? `Order created: #${payload?.order_number || payload?.id || "Unknown"}`

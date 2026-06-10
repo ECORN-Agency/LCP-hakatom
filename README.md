@@ -296,7 +296,10 @@ Unit-тесты на [Vitest](https://vitest.dev). Покрывают **логи
 | `app/models/baseline.test.ts` | rolling baseline: усреднение по неделям, пропуск пустых, null при отсутствии истории, AOV edge-cases (Prisma замокан) |
 | `app/models/metricsBuckets.test.ts` | UTC-нормализация в 10-минутные бакеты, иммутабельность входа |
 | `app/models/webhookProcessors.test.ts` | роутинг топиков + throw на неизвестном; дедуп orders create/updated; product create/update/delete/first-obs/ghost; theme non-main skip, publish dedup, publish create, update double-fire (Prisma + admin замоканы) |
-| `app/models/workerDrain.test.ts` | `drainWebhookJobs`: пустая очередь, успешный батч (completed), изоляция упавшей задачи (failed + errorMessage), truncation до 500 символов, проброс batch size в claim-query |
+| `app/models/workerDrain.test.ts` | `drainWebhookJobs`: пустая очередь, успешный батч, ретрай транзиентного сбоя в pending (H2), park в failed по капу попыток, перманентный fail сразу, reclaim протухших processing в claim-query (H1) |
+| `app/lib/webhookEnqueue.test.ts` | intake вебхуков: 200 success, P2002→200, реальный сбой enqueue→500 (M2), проброс Response верификации, opaque webhookId |
+| `app/lib/pixelParse.test.ts` | парсинг суммы из строк (M4), валидация occurredAt ±24ч и кап размера data (M3) |
+| `app/lib/dbLock.test.ts` | `withAdvisoryLock`: захват advisory-лока по ключу до колбэка, работа внутри одной транзакции (H3) |
 
 ```bash
 npm run test          # один прогон (~1s)
