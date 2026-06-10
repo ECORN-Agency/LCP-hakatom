@@ -1,4 +1,13 @@
-export async function fetchOrdersStats(admin, sinceISO, untilISO, includeEnd = true) {
+import type { AdminGraphqlClient } from "../lib/shopifyGraphql.server";
+
+type OrderEdge = { node?: { totalPriceSet?: { shopMoney?: { amount?: string } } } };
+
+export async function fetchOrdersStats(
+  admin: AdminGraphqlClient,
+  sinceISO: string,
+  untilISO: string,
+  includeEnd = true,
+): Promise<{ orders: number; revenue: number; conversionRate: number }> {
   const ordersQuery = `
     query getOrders($first: Int!, $query: String!) {
       orders(first: $first, query: $query) {
@@ -29,7 +38,7 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO, includeEnd = t
 
   const sinceDate = new Date(sinceISO).toISOString();
   const untilDate = new Date(untilISO).toISOString();
-  
+
   const dateOperator = includeEnd ? "<=" : "<";
   const queryString = `created_at:>=${sinceDate} AND created_at:${dateOperator}${untilDate} AND -test:true`;
 
@@ -45,15 +54,15 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO, includeEnd = t
     throw new Error(`GraphQL error: ${ordersResponse.statusText}`);
   }
 
-  const ordersData = await ordersResponse.json();
+  const ordersData: any = await ordersResponse.json();
 
   let orders = 0;
   let revenue = 0;
 
   if (ordersData.data?.orders?.edges) {
     orders = ordersData.data.orders.edges.length;
-    revenue = ordersData.data.orders.edges.reduce((sum, edge) => {
-      const amount = parseFloat(edge.node.totalPriceSet?.shopMoney?.amount || "0");
+    revenue = ordersData.data.orders.edges.reduce((sum: number, edge: OrderEdge) => {
+      const amount = parseFloat(edge.node?.totalPriceSet?.shopMoney?.amount || "0");
       return sum + amount;
     }, 0);
   }
@@ -69,7 +78,7 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO, includeEnd = t
     });
 
     if (checkoutsResponse.ok) {
-      const checkoutsData = await checkoutsResponse.json();
+      const checkoutsData: any = await checkoutsResponse.json();
       if (checkoutsData.data?.checkouts?.edges) {
         // Use checkouts as proxy for sessions (simplified for MVP)
         sessions = checkoutsData.data.checkouts.edges.length;
@@ -89,4 +98,3 @@ export async function fetchOrdersStats(admin, sinceISO, untilISO, includeEnd = t
 
   return { orders, revenue, conversionRate };
 }
-
