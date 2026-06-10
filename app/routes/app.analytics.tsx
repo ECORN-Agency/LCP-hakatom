@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useFetcher, useRevalidator } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, type HeadersFunction } from "react-router";
 import { useSearchParams } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
@@ -7,7 +7,7 @@ import prisma from "../db.server";
 import { getBucketMetrics, backfillLastNMinutes, normalizeTo10MinBucketUTC } from "../models/metricsBuckets.server";
 import { buildRecommendation } from "../models/recommendation";
 
-export const loader = async ({ request }) => {
+export const loader = async ({ request }: { request: Request }) => {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   // Default data range is 24h — covers a 24h symmetric comparison window
@@ -40,13 +40,13 @@ export const loader = async ({ request }) => {
   return { metrics: processedMetrics, events, minutes };
 };
 
-export const action = async ({ request }) => {
+export const action = async ({ request }: { request: Request }) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
   if (intent === "backfill") {
-    const minutes = parseInt(formData.get("minutes") || "120", 10);
+    const minutes = parseInt(String(formData.get("minutes") || "120"), 10);
     const result = await backfillLastNMinutes(admin, session.shop, minutes);
     if (result.locked) {
       return {
@@ -64,7 +64,7 @@ export const action = async ({ request }) => {
 // Pull event-type-specific context out of the raw Change row before handing
 // it to the recommendation engine. Keep this pure so it can move into
 // app/models/ later if other surfaces need it.
-function extractEventContext(event) {
+function extractEventContext(event: any) {
   if (!event) return {};
 
   if (event.type === "products_update" || event.type === "products_create") {
@@ -91,7 +91,7 @@ function extractEventContext(event) {
 }
 
 export default function Analytics() {
-  const { metrics, events, minutes } = useLoaderData();
+  const { metrics, events, minutes } = useLoaderData() as { metrics: any[]; events: any[]; minutes: number };
   const fetcher = useFetcher();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -117,7 +117,7 @@ export default function Analytics() {
   // Multi-select chips: each category toggles independently. The "All" button
   // acts as a reset — clicking it switches everything back on. Default state
   // has all categories enabled.
-  const toggleCategory = (cat) => {
+  const toggleCategory = (cat: string) => {
     setEnabledCategories((prev) => {
       const next = new Set(prev);
       if (next.has(cat)) next.delete(cat);
@@ -130,7 +130,7 @@ export default function Analytics() {
 
   const isAllCategoriesSelected = enabledCategories.size === ALL_CATEGORIES.length;
 
-  const categoryOfType = (type) => {
+  const categoryOfType = (type: string) => {
     if (!type) return "manual";
     if (type.startsWith("theme")) return "theme";
     if (type.startsWith("products")) return "products";
@@ -139,10 +139,10 @@ export default function Analytics() {
     return "manual";
   };
 
-  const isInTimeFilter = (eventDate) => {
+  const isInTimeFilter = (eventDate: string | Date) => {
     if (timeFilter === "all") return true;
     const now = Date.now();
-    const t = eventDate.getTime();
+    const t = new Date(eventDate).getTime();
     if (timeFilter === "1h") return t >= now - 60 * 60 * 1000;
     if (timeFilter === "6h") return t >= now - 6 * 60 * 60 * 1000;
     if (timeFilter === "today") {
@@ -170,13 +170,13 @@ export default function Analytics() {
     );
   };
 
-  const handleCompareChange = (newCompare) => {
+  const handleCompareChange = (newCompare: number) => {
     const newParams = new URLSearchParams(searchParams);
     newParams.set("compare", newCompare.toString());
     setSearchParams(newParams);
   };
 
-  const formatRangeLabel = (mins) => {
+  const formatRangeLabel = (mins: number) => {
     if (mins >= 1440) return `${mins / 1440}d`;
     if (mins >= 60) return `${mins / 60}h`;
     return `${mins}m`;
@@ -212,14 +212,14 @@ export default function Analytics() {
   const baselineData =
     baselineFetcher.data && !baselineFetcher.data.error ? baselineFetcher.data : null;
 
-  const handleMinutesChange = (newMinutes) => {
+  const handleMinutesChange = (newMinutes: number) => {
     const newParams = new URLSearchParams(searchParams);
     newParams.set("minutes", newMinutes.toString());
     setSearchParams(newParams);
   };
 
-  const getTypeBadge = (type) => {
-    const typeMap = {
+  const getTypeBadge = (type: string) => {
+    const typeMap: Record<string, string> = {
       theme_published: "Theme published",
       theme_switched: "Theme switched",
       theme_files_updated: "Theme updated",
@@ -236,15 +236,15 @@ export default function Analytics() {
     return typeMap[type] || type;
   };
 
-  const getTypeTone = (type) => {
+  const getTypeTone = (type: string) => {
     if (type.startsWith("theme_")) return "info";
     if (type.startsWith("orders_")) return "success";
     if (type.startsWith("products_")) return "warning";
-    if (type.startsWith("collections_")) return "attention";
+    if (type.startsWith("collections_")) return "caution";
     return "neutral";
   };
 
-  function normalizeTo10MinBucketUTC(date) {
+  function normalizeTo10MinBucketUTC(date: Date) {
     const d = new Date(date);
     const minutes = d.getUTCMinutes();
     const roundedMinutes = Math.floor(minutes / 10) * 10;
@@ -252,7 +252,7 @@ export default function Analytics() {
     return d;
   }
 
-  const calculateObservedChange = (event) => {
+  const calculateObservedChange = (event: any) => {
     if (!event) return null;
 
     // Use the URL-controlled comparison window (minutes), not a hardcoded 10.
@@ -296,7 +296,7 @@ export default function Analytics() {
 
     const revenueDeltaPct = beforeRevenue > 0 ? ((afterRevenue - beforeRevenue) / beforeRevenue) * 100 : null;
     const ordersDeltaPct = beforeOrders > 0 ? ((afterOrders - beforeOrders) / beforeOrders) * 100 : null;
-    const aovDeltaPct = beforeAOV !== null && beforeAOV > 0 ? ((afterAOV - beforeAOV) / beforeAOV) * 100 : null;
+    const aovDeltaPct = beforeAOV !== null && beforeAOV > 0 && afterAOV !== null ? ((afterAOV - beforeAOV) / beforeAOV) * 100 : null;
 
     const overlappingEvents = events.filter(
       (e) =>
@@ -387,7 +387,7 @@ export default function Analytics() {
                   </s-button>
                 ))}
               </s-stack>
-              <s-text color="subdued" type="subdued">
+              <s-text color="subdued">
                 24h is the recommended default — smooths hour-of-day noise. Pick 7d
                 for stores with low daily traffic (smooths day-of-week patterns too).
               </s-text>
@@ -397,7 +397,7 @@ export default function Analytics() {
                 </s-badge>
               )}
               {compareMinutes * 2 > minutes && (
-                <s-text color="subdued" type="subdued">
+                <s-text color="subdued">
                   Heads up: comparison window is wider than the data range, so coverage
                   will be capped. Bump the data range above for a fairer comparison.
                 </s-text>
@@ -412,7 +412,7 @@ export default function Analytics() {
             >
               Backfill last {formatRangeLabel(minutes)}
             </s-button>
-            <s-text color="subdued" type="subdued">
+            <s-text color="subdued">
               Results are early signals, not causal proof. Wider windows = stronger signal but more chance of overlapping events.
             </s-text>
             {anyPartial && (
@@ -481,7 +481,7 @@ export default function Analytics() {
               placeholder="e.g. price, theme, snowboard…"
             />
 
-            <s-text color="subdued" type="subdued">
+            <s-text color="subdued">
               Showing {filteredEvents.length} of {events.length} events.
               {trimmedSearch || timeFilter !== "all" || !isAllCategoriesSelected
                 ? " Filters active."
@@ -499,7 +499,7 @@ export default function Analytics() {
             borderColor="base"
             borderRadius="base"
           >
-            <s-text alignment="center" color="subdued">
+            <s-text color="subdued">
               {events.length === 0
                 ? "No events in this range."
                 : "No events match the current filters. Loosen them above."}
@@ -515,7 +515,7 @@ export default function Analytics() {
               // events can react to conversion-rate drops directly.
               const funnelDelta = isSelected ? baselineData?.funnel?.deltaPct : null;
 
-              const eventObservedChange = eventObservedChangeData ? {
+              const eventObservedChange: any = eventObservedChangeData ? {
                 ...eventObservedChangeData,
                 recommendation: eventObservedChangeData.waiting ? null : buildRecommendation({
                   eventType: event.type,
@@ -546,21 +546,21 @@ export default function Analytics() {
                 >
                   <s-stack id={`event-row-stack-${event.id}`} gap="base">
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--p-space-4)", width: "100%" }}>
-                      <s-stack id={`event-row-main-${event.id}`} direction="inline" gap="base" alignItems="center" style={{ flex: "1 1 0%", minWidth: 0, overflow: "hidden" }}>
-                        <s-text color="subdued" style={{ whiteSpace: "nowrap", flexShrink: 0 }}>
+                      <s-stack id={`event-row-main-${event.id}`} direction="inline" gap="base" alignItems="center" {...{ style: { flex: "1 1 0%", minWidth: 0, overflow: "hidden" } }}>
+                        <s-text color="subdued" {...{ style: { whiteSpace: "nowrap", flexShrink: 0 } }}>
                           {new Date(event.occurredAt).toLocaleString()}
                         </s-text>
-                        <s-badge tone={getTypeTone(event.type)} style={{ whiteSpace: "nowrap", flexShrink: 0 }}>
+                        <s-badge tone={getTypeTone(event.type)} {...{ style: { whiteSpace: "nowrap", flexShrink: 0 } }}>
                           {getTypeBadge(event.type)}
                         </s-badge>
-                        <s-text style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "1 1 0%" }}>
+                        <s-text {...{ style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: "1 1 0%" } }}>
                           {event.summary}
                         </s-text>
                       </s-stack>
                       <s-button
                         variant="secondary"
                         onClick={() => setSelectedEventId(isSelected ? null : event.id)}
-                        style={{ flex: "0 0 auto" }}
+                        {...{ style: { flex: "0 0 auto" } }}
                       >
                         <span style={{ whiteSpace: "nowrap" }}>
                           {isSelected ? "Hide comparison" : "Compare around event"}
@@ -663,9 +663,9 @@ export default function Analytics() {
                               const f = baselineData.funnel;
                               const hasAnyTraffic =
                                 f.before.pageViews > 0 || f.after.pageViews > 0;
-                              const fmtPct = (v) =>
+                              const fmtPct = (v: number | null) =>
                                 v === null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
-                              const fmtRate = (v) =>
+                              const fmtRate = (v: number | null) =>
                                 v === null ? "n/a" : `${(v * 100).toFixed(2)}%`;
                               return (
                                 <s-box
@@ -710,13 +710,13 @@ export default function Analytics() {
                                             </div>
                                           </div>
                                         ))}
-                                        <s-text color="subdued" type="subdued">
+                                        <s-text color="subdued">
                                           Pixel data arrives in seconds vs orders that lag by minutes-to-hours.
                                           For theme changes, conversion rate Δ is the earliest meaningful signal.
                                         </s-text>
                                       </s-stack>
                                     ) : (
-                                      <s-text color="subdued" type="subdued">
+                                      <s-text color="subdued">
                                         No storefront pixel events in this window. Either no customer traffic
                                         in the comparison range, or the pixel isn't active yet.
                                       </s-text>
@@ -742,7 +742,7 @@ export default function Analytics() {
                                     {baselineFetcher.state !== "idle" ? (
                                       <s-badge tone="info">Loading…</s-badge>
                                     ) : baselineData ? (
-                                      <s-badge tone={baselineData.baseline.weeksWithData >= 3 ? "success" : baselineData.baseline.weeksWithData >= 1 ? "attention" : "warning"}>
+                                      <s-badge tone={baselineData.baseline.weeksWithData >= 3 ? "success" : baselineData.baseline.weeksWithData >= 1 ? "caution" : "warning"}>
                                         {baselineData.baseline.weeksWithData}/{baselineData.baseline.totalWeeks} weeks of history
                                       </s-badge>
                                     ) : (
@@ -751,7 +751,7 @@ export default function Analytics() {
                                   </s-stack>
 
                                   {baselineFetcher.state === "idle" && baselineData && baselineData.baseline.weeksWithData === 0 && (
-                                    <s-text color="subdued" type="subdued">
+                                    <s-text color="subdued">
                                       No buckets in the same time-of-day × day-of-week slot over the last 4 weeks.
                                       Baseline will improve as the app accumulates history (or once you backfill further back).
                                     </s-text>
@@ -811,7 +811,7 @@ export default function Analytics() {
                                           </div>
                                         </div>
                                       ))}
-                                      <s-text color="subdued" type="subdued">
+                                      <s-text color="subdued">
                                         Expected = average of the same wall-clock window across the prior {baselineData.baseline.weeksWithData} weeks.
                                         Smooths out hour-of-day and day-of-week seasonality.
                                       </s-text>
@@ -825,9 +825,9 @@ export default function Analytics() {
                               <s-box
                                 id={`recommendation-box-${event.id}`}
                                 padding="base"
-                                background={eventObservedChange.recommendation.tone === "success" ? "success-subdued" : eventObservedChange.recommendation.tone === "critical" ? "critical-subdued" : "base"}
+                                background={(eventObservedChange.recommendation.tone === "success" ? "success-subdued" : eventObservedChange.recommendation.tone === "critical" ? "critical-subdued" : "base") as any}
                                 borderWidth="base"
-                                borderColor={eventObservedChange.recommendation.tone === "success" ? "success" : eventObservedChange.recommendation.tone === "critical" ? "critical" : "base"}
+                                borderColor={(eventObservedChange.recommendation.tone === "success" ? "success" : eventObservedChange.recommendation.tone === "critical" ? "critical" : "base") as any}
                                 borderRadius="base"
                               >
                                 <s-stack id={`recommendation-stack-${event.id}`} gap="small">
@@ -839,13 +839,13 @@ export default function Analytics() {
                                   </s-stack>
                                   <s-text>{eventObservedChange.recommendation.text}</s-text>
                                   <s-stack id={`drivers-list-${event.id}`} gap="small">
-                                    {eventObservedChange.recommendation.drivers.map((driver, idx) => (
-                                      <s-text key={idx} color="subdued" type="subdued">
+                                    {eventObservedChange.recommendation.drivers.map((driver: string, idx: number) => (
+                                      <s-text key={idx} color="subdued">
                                         • {driver}
                                       </s-text>
                                     ))}
                                   </s-stack>
-                                  <s-text color="subdued" type="subdued">
+                                  <s-text color="subdued">
                                     Early signal in compressed window; not causal proof.
                                   </s-text>
                                 </s-stack>
@@ -873,7 +873,7 @@ export default function Analytics() {
             borderColor="base"
             borderRadius="base"
           >
-            <s-text alignment="center" color="subdued">
+            <s-text color="subdued">
               No metrics yet. Press "Backfill" to populate metrics.
             </s-text>
           </s-box>
@@ -916,7 +916,7 @@ export default function Analytics() {
   );
 }
 
-export const headers = (headersArgs) => {
+export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);
 };
 

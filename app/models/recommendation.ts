@@ -6,7 +6,9 @@
 export type PriceDirection = "up" | "down" | "mixed";
 
 export type EventContext = {
-  priceDirection?: PriceDirection;
+  // Callers compute this from raw variant data, so accept any string and let
+  // the text branching match the known directions.
+  priceDirection?: string;
   [key: string]: unknown;
 };
 
@@ -19,16 +21,18 @@ export type BuildRecommendationInput = {
   eventType?: string;
   eventContext?: EventContext;
   windowMinutes?: number;
-  revenueDeltaPct: number | null;
-  ordersDeltaPct: number | null;
-  aovDeltaPct: number | null;
+  // Nullable metric deltas. `undefined` is accepted (callers may omit fields)
+  // and normalized to null via the destructuring defaults below.
+  revenueDeltaPct?: number | null;
+  ordersDeltaPct?: number | null;
+  aovDeltaPct?: number | null;
   conversionDeltaPct?: number | null;
   pageViewsDeltaPct?: number | null;
-  partialData: boolean;
-  overlappingEvents: number;
-  coverageBefore: number;
-  coverageAfter: number;
-  expectedBuckets: number;
+  partialData?: boolean;
+  overlappingEvents?: number;
+  coverageBefore?: number;
+  coverageAfter?: number;
+  expectedBuckets?: number;
 };
 
 export type Recommendation = {
@@ -56,18 +60,18 @@ export function buildRecommendation({
   // Size of the comparison window in minutes (10, 60, 360, 1440, ...).
   // Drivers will be labelled with the appropriate human unit.
   windowMinutes = 10,
-  revenueDeltaPct,
-  ordersDeltaPct,
-  aovDeltaPct,
+  revenueDeltaPct = null,
+  ordersDeltaPct = null,
+  aovDeltaPct = null,
   // Storefront pixel deltas. Optional — if the pixel has no data in the
   // window, leave null and we skip the conversion-aware logic.
   conversionDeltaPct = null,
   pageViewsDeltaPct = null,
-  partialData,
-  overlappingEvents,
-  coverageBefore,
-  coverageAfter,
-  expectedBuckets,
+  partialData = false,
+  overlappingEvents = 0,
+  coverageBefore = 0,
+  coverageAfter = 0,
+  expectedBuckets = 0,
 }: BuildRecommendationInput): Recommendation {
   let confidence = 100;
 

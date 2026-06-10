@@ -1,4 +1,5 @@
-import { useLoaderData, useFetcher, useRouteError } from "react-router";
+import { useLoaderData, useFetcher, useRouteError, type HeadersFunction } from "react-router";
+import type { ReactNode } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -39,7 +40,7 @@ const WEBHOOK_SUBS_QUERY = `#graphql
   }
 `;
 
-export const loader = async ({ request }) => {
+export const loader = async ({ request }: { request: Request }) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
   const since24h = SINCE_24H();
@@ -206,7 +207,7 @@ export const loader = async ({ request }) => {
   };
 };
 
-export const action = async ({ request }) => {
+export const action = async ({ request }: { request: Request }) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent") ?? "");
@@ -259,11 +260,13 @@ export const action = async ({ request }) => {
   return { ok: false, message: `Unknown intent: ${intent}` };
 };
 
-function StatusBadge({ tone, children }) {
+type BadgeTone = "info" | "neutral" | "success" | "critical" | "warning" | "caution";
+
+function StatusBadge({ tone, children }: { tone: BadgeTone; children: ReactNode }) {
   return <s-badge tone={tone}>{children}</s-badge>;
 }
 
-function relativeTime(date) {
+function relativeTime(date: string | Date | null | undefined) {
   if (!date) return "never";
   const ms = Date.now() - new Date(date).getTime();
   if (ms < 60_000) return "just now";
@@ -273,7 +276,7 @@ function relativeTime(date) {
 }
 
 export default function Health() {
-  const d = useLoaderData();
+  const d = useLoaderData() as any;
   const drainFetcher = useFetcher();
   const lockFetcher = useFetcher();
   const pixelFetcher = useFetcher();
@@ -284,7 +287,7 @@ export default function Health() {
     ? Date.now() - new Date(d.lastCompletedAt).getTime() > 5 * 60_000
     : d.jobCounts.pending > 0;
   const lastJobAge = d.lastCompletedAt ? Date.now() - new Date(d.lastCompletedAt).getTime() : null;
-  const lastJobTone = lastJobAge === null ? "warning" : lastJobAge < 15 * 60_000 ? "success" : lastJobAge < 60 * 60_000 ? "attention" : "critical";
+  const lastJobTone: BadgeTone = lastJobAge === null ? "warning" : lastJobAge < 15 * 60_000 ? "success" : lastJobAge < 60 * 60_000 ? "caution" : "critical";
 
   // Backfill stuck check
   const backfillStuck =
@@ -296,7 +299,7 @@ export default function Health() {
   const pixelStaleData = d.pixelActive && d.pixelEventsTotal24h === 0;
 
   // Topics with no events in 24h
-  const silentTopics = d.knownTopics.filter((t) => !d.jobsByTopic[t]);
+  const silentTopics = d.knownTopics.filter((t: string) => !d.jobsByTopic[t]);
 
   return (
     <s-page id="health-page" heading="Health">
@@ -305,7 +308,7 @@ export default function Health() {
         <s-box padding="base" background="base" borderWidth="base" borderColor="base" borderRadius="base">
           <s-stack gap="small">
             <s-stack direction="inline" gap="base" alignItems="center">
-              <StatusBadge tone={d.jobCounts.pending > 0 ? (queueStuck ? "critical" : "attention") : "success"}>
+              <StatusBadge tone={d.jobCounts.pending > 0 ? (queueStuck ? "critical" : "caution") : "success"}>
                 Pending: {d.jobCounts.pending}
               </StatusBadge>
               <StatusBadge tone="info">Processing: {d.jobCounts.processing}</StatusBadge>
@@ -325,7 +328,7 @@ export default function Health() {
                 Drain queue now
               </s-button>
               {drainFetcher.data?.message && (
-                <s-text color={drainFetcher.data.ok ? "subdued" : "critical"}>
+                <s-text color="subdued" tone={drainFetcher.data.ok ? "auto" : "critical"}>
                   {drainFetcher.data.message}
                 </s-text>
               )}
@@ -334,13 +337,13 @@ export default function Health() {
             {d.recentFailedJobs.length > 0 && (
               <s-stack gap="small">
                 <s-text type="strong">Recent failed jobs:</s-text>
-                {d.recentFailedJobs.map((j, idx) => (
+                {d.recentFailedJobs.map((j: any, idx: number) => (
                   <s-box key={idx} padding="small" background="subdued" borderRadius="small">
                     <s-text color="subdued">
                       <s-text type="strong">{j.topic}</s-text> · {new Date(j.createdAt).toLocaleString()} · attempts {j.attempts}
                     </s-text>
                     {j.errorMessage && (
-                      <s-text color="critical" type="subdued">{j.errorMessage}</s-text>
+                      <s-text tone="critical">{j.errorMessage}</s-text>
                     )}
                   </s-box>
                 ))}
@@ -357,7 +360,7 @@ export default function Health() {
             {d.knownTopics.length === 0 ? (
               <s-text color="subdued">No webhook topics expected. Check shopify.app.toml is deployed.</s-text>
             ) : (
-              d.knownTopics.map((topic) => (
+              d.knownTopics.map((topic: string) => (
                 <div
                   key={topic}
                   style={{
@@ -372,19 +375,19 @@ export default function Health() {
                     {d.jobsByTopic[topic] > 0 ? (
                       <s-text type="strong">{d.jobsByTopic[topic]}</s-text>
                     ) : (
-                      <StatusBadge tone="attention">silent</StatusBadge>
+                      <StatusBadge tone="caution">silent</StatusBadge>
                     )}
                   </div>
                 </div>
               ))
             )}
             {silentTopics.length > 0 && (
-              <s-text color="subdued" type="subdued">
+              <s-text color="subdued">
                 {silentTopics.length} topic(s) had no events in 24h. Could be normal for a quiet store, or the subscription drifted — re-run `shopify app deploy` if you suspect drift.
               </s-text>
             )}
             {d.subsError && (
-              <s-text color="critical" type="subdued">webhookSubscriptions check failed: {d.subsError}</s-text>
+              <s-text tone="critical">webhookSubscriptions check failed: {d.subsError}</s-text>
             )}
           </s-stack>
         </s-box>
@@ -395,7 +398,7 @@ export default function Health() {
         <s-box padding="base" background="base" borderWidth="base" borderColor="base" borderRadius="base">
           <s-stack gap="small">
             <s-stack direction="inline" gap="base" alignItems="center">
-              <StatusBadge tone={d.pixelActive ? (pixelStaleData ? "attention" : "success") : "critical"}>
+              <StatusBadge tone={d.pixelActive ? (pixelStaleData ? "caution" : "success") : "critical"}>
                 {d.pixelActive ? "Active" : "Not active"}
               </StatusBadge>
               {d.pixelActivatedAt && (
@@ -409,25 +412,25 @@ export default function Health() {
                 Re-activate
               </s-button>
               {pixelFetcher.data?.message && (
-                <s-text color={pixelFetcher.data.ok ? "subdued" : "critical"}>{pixelFetcher.data.message}</s-text>
+                <s-text color="subdued" tone={pixelFetcher.data.ok ? "auto" : "critical"}>{pixelFetcher.data.message}</s-text>
               )}
             </s-stack>
             {d.pixelId && (
-              <s-text color="subdued" type="subdued">ID: {d.pixelId}</s-text>
+              <s-text color="subdued">ID: {d.pixelId}</s-text>
             )}
             {d.pixelLastError && (
-              <s-text color="critical" type="subdued">Last error: {d.pixelLastError}</s-text>
+              <s-text tone="critical">Last error: {d.pixelLastError}</s-text>
             )}
 
             <s-text type="strong">PixelEvent counts (24h, total: {d.pixelEventsTotal24h}):</s-text>
             {Object.keys(d.pixelByName).length === 0 ? (
               pixelStaleData ? (
-                <s-text color="critical" type="subdued">
+                <s-text tone="critical">
                   Pixel is active but received zero events in 24h. Either no customer traffic, or the pixel
                   isn't firing — check the storefront in incognito.
                 </s-text>
               ) : (
-                <s-text color="subdued" type="subdued">No events recorded yet.</s-text>
+                <s-text color="subdued">No events recorded yet.</s-text>
               )
             ) : (
               Object.entries(d.pixelByName).map(([name, count]) => (
@@ -477,7 +480,7 @@ export default function Health() {
               </s-button>
             )}
             {lockFetcher.data?.message && (
-              <s-text color={lockFetcher.data.ok ? "subdued" : "critical"}>{lockFetcher.data.message}</s-text>
+              <s-text color="subdued" tone={lockFetcher.data.ok ? "auto" : "critical"}>{lockFetcher.data.message}</s-text>
             )}
           </s-stack>
         </s-box>
@@ -501,19 +504,19 @@ export default function Health() {
                 Send test email
               </s-button>
               {emailFetcher.data?.message && (
-                <s-text color={emailFetcher.data.ok ? "subdued" : "critical"}>{emailFetcher.data.message}</s-text>
+                <s-text color="subdued" tone={emailFetcher.data.ok ? "auto" : "critical"}>{emailFetcher.data.message}</s-text>
               )}
             </s-stack>
             {d.recentFailedDeliveries.length > 0 && (
               <s-stack gap="small">
                 <s-text type="strong">Recent failed deliveries:</s-text>
-                {d.recentFailedDeliveries.map((dlv, idx) => (
+                {d.recentFailedDeliveries.map((dlv: any, idx: number) => (
                   <s-box key={idx} padding="small" background="subdued" borderRadius="small">
                     <s-text>
                       <s-text type="strong">{dlv.destination}</s-text> · {new Date(dlv.deliveredAt).toLocaleString()}
                     </s-text>
                     {dlv.errorMessage && (
-                      <s-text color="critical" type="subdued">{dlv.errorMessage}</s-text>
+                      <s-text tone="critical">{dlv.errorMessage}</s-text>
                     )}
                   </s-box>
                 ))}
@@ -540,7 +543,7 @@ export default function Health() {
                 Latest event: {new Date(d.latestChangeAt).toLocaleString()} ({relativeTime(d.latestChangeAt)})
               </s-text>
             )}
-            <s-text color="subdued" type="subdued">Shop: {d.shop}</s-text>
+            <s-text color="subdued">Shop: {d.shop}</s-text>
           </s-stack>
         </s-box>
       </s-section>
@@ -552,4 +555,4 @@ export function ErrorBoundary() {
   return boundary.error(useRouteError());
 }
 
-export const headers = (headersArgs) => boundary.headers(headersArgs);
+export const headers: HeadersFunction = (headersArgs) => boundary.headers(headersArgs);
