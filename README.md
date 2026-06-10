@@ -284,8 +284,9 @@ production-URL в Partner Dashboard.
 
 ## Тесты
 
-Unit-тесты на [Vitest](https://vitest.dev). Покрывают **чистую логику ядра** —
-ту, где баг тихо искажает вердикт для мерчанта, а не падает с ошибкой:
+Unit-тесты на [Vitest](https://vitest.dev). Покрывают **логику ядра** — ту,
+где баг тихо искажает вердикт для мерчанта или дублирует данные, а не падает
+с ошибкой. Слой с БД/конкурентностью тестируется с замоканным Prisma:
 
 | Файл | Что проверяет |
 |---|---|
@@ -294,6 +295,8 @@ Unit-тесты на [Vitest](https://vitest.dev). Покрывают **чист
 | `app/models/themeDiff.test.ts` | added / modified / removed файлы, checksum vs fallback на `updatedAt` |
 | `app/models/baseline.test.ts` | rolling baseline: усреднение по неделям, пропуск пустых, null при отсутствии истории, AOV edge-cases (Prisma замокан) |
 | `app/models/metricsBuckets.test.ts` | UTC-нормализация в 10-минутные бакеты, иммутабельность входа |
+| `app/models/webhookProcessors.test.ts` | роутинг топиков + throw на неизвестном; дедуп orders create/updated; product create/update/delete/first-obs/ghost; theme non-main skip, publish dedup, publish create, update double-fire (Prisma + admin замоканы) |
+| `app/models/workerDrain.test.ts` | `drainWebhookJobs`: пустая очередь, успешный батч (completed), изоляция упавшей задачи (failed + errorMessage), truncation до 500 символов, проброс batch size в claim-query |
 
 ```bash
 npm run test          # один прогон (~1s)
