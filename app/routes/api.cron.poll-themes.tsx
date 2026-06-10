@@ -14,13 +14,12 @@
 
 import { logger } from "../logger.server";
 import { pollAllActiveShops } from "../models/themeChangeRecorder.server";
+import { bearerMatches } from "../lib/auth.server";
 
 export const action = async ({ request }) => {
-  const auth = request.headers.get("authorization") ?? "";
-  const cronExpected = process.env.CRON_SECRET ? `Bearer ${process.env.CRON_SECRET}` : null;
-  const internalExpected = process.env.INTERNAL_SECRET ? `Bearer ${process.env.INTERNAL_SECRET}` : null;
+  const auth = request.headers.get("authorization");
 
-  if (!(auth === cronExpected || auth === internalExpected)) {
+  if (!bearerMatches(auth, process.env.CRON_SECRET, process.env.INTERNAL_SECRET)) {
     logger.warn({ path: "/api/cron/poll-themes" }, "unauthorized poll request");
     return new Response("unauthorized", { status: 401 });
   }

@@ -15,6 +15,7 @@ import { evaluateChange, ruleMatches } from "../models/alertEvaluation.server";
 import { sendEmail } from "../lib/email.server";
 import { drainWebhookJobs } from "../models/workerDrain.server";
 import { pollAllActiveShops } from "../models/themeChangeRecorder.server";
+import { bearerMatches } from "../lib/auth.server";
 
 // Don't scan too far back — events older than this aren't worth alerting on,
 // they're stale.
@@ -23,9 +24,8 @@ const MAX_LOOKBACK_HOURS = 6;
 export const loader = async ({ request }) => {
   // Vercel Cron requests carry an Authorization: Bearer <CRON_SECRET> header.
   // We require it so the endpoint isn't a free DoS target.
-  const auth = request.headers.get("authorization") ?? "";
-  const expected = `Bearer ${process.env.CRON_SECRET ?? ""}`;
-  if (!process.env.CRON_SECRET || auth !== expected) {
+  const auth = request.headers.get("authorization");
+  if (!bearerMatches(auth, process.env.CRON_SECRET)) {
     logger.warn({ path: "/api/cron/evaluate-alerts" }, "unauthorized cron request");
     return new Response("unauthorized", { status: 401 });
   }
@@ -96,6 +96,19 @@ export const loader = async ({ request }) => {
       take: 100, // safety cap per shop per run
     });
 
+    // Prefetch all already-processed (rule, change) pairs for this shop in one
+    // query instead of a findUnique per pair inside the loops. (L3)
+    const processed = new Set<string>();
+    if (changes.length > 0) {
+      const existingDeliveries = await prisma.alertDelivery.findMany({
+        where: { shop, changeId: { in: changes.map((c) => c.id) } },
+        select: { ruleId: true, changeId: true },
+      });
+      for (const d of existingDeliveries) {
+        processed.add(`${d.ruleId}:${d.changeId}`);
+      }
+    }
+
     for (const change of changes) {
       for (const rule of rules) {
         const ruleDelayCutoff = new Date(now - rule.evaluationDelayMin * 60 * 1000);
@@ -105,10 +118,7 @@ export const loader = async ({ request }) => {
         }
 
         // Skip if we've already processed this (rule, change) pair.
-        const existing = await prisma.alertDelivery.findUnique({
-          where: { ruleId_changeId: { ruleId: rule.id, changeId: change.id } },
-        });
-        if (existing) {
+        if (processed.has(`${rule.id}:${change.id}`)) {
           continue;
         }
 
@@ -141,6 +151,7 @@ export const loader = async ({ request }) => {
             .catch(() => {
               // Concurrent insert — fine, ignore unique violation.
             });
+          processed.add(`${rule.id}:${change.id}`);
           skipped += 1;
           continue;
         }
@@ -183,6 +194,7 @@ export const loader = async ({ request }) => {
           .catch(() => {
             // Race lost, another worker already wrote it.
           });
+        processed.add(`${rule.id}:${change.id}`);
 
         if (sendResult.ok) {
           sent += 1;

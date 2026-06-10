@@ -12,15 +12,12 @@
 import prisma from "../db.server";
 import { logger } from "../logger.server";
 import { drainWebhookJobs } from "../models/workerDrain.server";
+import { bearerMatches } from "../lib/auth.server";
 
 export const action = async ({ request }) => {
-  const auth = request.headers.get("authorization") ?? "";
-  const internalExpected = process.env.INTERNAL_SECRET
-    ? `Bearer ${process.env.INTERNAL_SECRET}`
-    : null;
-  const cronExpected = process.env.CRON_SECRET ? `Bearer ${process.env.CRON_SECRET}` : null;
+  const auth = request.headers.get("authorization");
 
-  if (!(auth === internalExpected || auth === cronExpected)) {
+  if (!bearerMatches(auth, process.env.INTERNAL_SECRET, process.env.CRON_SECRET)) {
     logger.warn({ path: "/api/jobs/run" }, "unauthorized worker call");
     return new Response("unauthorized", { status: 401 });
   }

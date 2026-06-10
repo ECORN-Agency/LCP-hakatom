@@ -300,6 +300,7 @@ Unit-тесты на [Vitest](https://vitest.dev). Покрывают **логи
 | `app/lib/webhookEnqueue.test.ts` | intake вебхуков: 200 success, P2002→200, реальный сбой enqueue→500 (M2), проброс Response верификации, opaque webhookId |
 | `app/lib/pixelParse.test.ts` | парсинг суммы из строк (M4), валидация occurredAt ±24ч и кап размера data (M3) |
 | `app/lib/dbLock.test.ts` | `withAdvisoryLock`: захват advisory-лока по ключу до колбэка, работа внутри одной транзакции (H3) |
+| `app/lib/auth.test.ts` | `bearerMatches`: constant-time проверка Bearer-секрета, несколько секретов, отказ на mismatch/без префикса/без секретов (L1) |
 
 ```bash
 npm run test          # один прогон (~1s)
