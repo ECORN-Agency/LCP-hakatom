@@ -99,6 +99,43 @@ describe("computeRollingBaseline", () => {
     expect(findMany).toHaveBeenCalledTimes(2);
     expect(r.totalWeeks).toBe(2);
   });
+
+  it("computes population stddev of weekly orders/revenue", async () => {
+    findMany
+      .mockResolvedValueOnce([bucket(10, 100)])
+      .mockResolvedValueOnce([bucket(20, 200)])
+      .mockResolvedValueOnce([bucket(30, 300)])
+      .mockResolvedValueOnce([bucket(40, 400)]);
+
+    const r = await computeRollingBaseline({
+      shop: "s.myshopify.com",
+      eventTime: new Date("2026-06-07T17:00:00Z"),
+      windowMinutes: 1440,
+    });
+
+    // orders [10,20,30,40], mean 25 → variance 125 → σ ≈ 11.18
+    expect(r.stdDevOrders).toBeCloseTo(Math.sqrt(125), 4);
+    // revenue [100,200,300,400], mean 250 → variance 12500 → σ ≈ 111.8
+    expect(r.stdDevRevenue).toBeCloseTo(Math.sqrt(12500), 4);
+  });
+
+  it("stddev is null with fewer than 2 weeks of data", async () => {
+    findMany
+      .mockResolvedValueOnce([bucket(10, 100)])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const r = await computeRollingBaseline({
+      shop: "s.myshopify.com",
+      eventTime: new Date("2026-06-07T17:00:00Z"),
+      windowMinutes: 1440,
+    });
+
+    expect(r.weeksWithData).toBe(1);
+    expect(r.stdDevOrders).toBeNull();
+    expect(r.stdDevRevenue).toBeNull();
+  });
 });
 
 describe("fetchActualAfterEvent", () => {

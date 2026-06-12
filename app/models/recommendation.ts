@@ -30,9 +30,21 @@ export type BuildRecommendationInput = {
   pageViewsDeltaPct?: number | null;
   partialData?: boolean;
   overlappingEvents?: number;
+  // Optional human labels for the events overlapping the comparison window
+  // (e.g. "theme_published @ 14:05"). When provided, the overlapping-events
+  // driver lists what is competing for attribution instead of just a count.
+  overlappingEventLabels?: string[];
   coverageBefore?: number;
   coverageAfter?: number;
   expectedBuckets?: number;
+  // Statistical guards (computed by the caller from the rolling baseline):
+  //   withinNoiseBand — the actual movement is within ~1σ of the store's normal
+  //     week-to-week swing, i.e. not distinguishable from noise.
+  //   lowVolume — too few orders in the baseline/actual window to make a strong
+  //     call (small-sample, where Δ% explodes off a tiny denominator).
+  // Both cap strength at "moderate" and dock confidence; neither flips a label.
+  withinNoiseBand?: boolean;
+  lowVolume?: boolean;
 };
 
 export type Recommendation = {
@@ -69,11 +81,18 @@ export function buildRecommendation({
   pageViewsDeltaPct = null,
   partialData = false,
   overlappingEvents = 0,
+  overlappingEventLabels = [],
   coverageBefore = 0,
   coverageAfter = 0,
   expectedBuckets = 0,
+  withinNoiseBand = false,
+  lowVolume = false,
 }: BuildRecommendationInput): Recommendation {
   let confidence = 100;
+  // Set when a large traffic swing means the orders/revenue movement is likely
+  // driven by external traffic rather than the merchant's change. Surfaced as a
+  // driver so the reduced confidence is explainable.
+  let trafficConfounded = false;
 
   if (revenueDeltaPct !== null && ordersDeltaPct !== null) {
     if ((revenueDeltaPct > 0 && ordersDeltaPct < 0) || (revenueDeltaPct < 0 && ordersDeltaPct > 0)) {
@@ -103,6 +122,24 @@ export function buildRecommendation({
 
   if (coverageAfter < expectedBuckets) {
     confidence -= 15;
+  }
+
+  // pageViews is NOT a primary verdict axis — a big traffic swing usually
+  // reflects marketing / referrals / seasonality, not the store change. When
+  // traffic moves a lot, the orders/revenue delta is confounded by it, so we
+  // lower confidence rather than letting it sway the label.
+  if (pageViewsDeltaPct !== null && Math.abs(pageViewsDeltaPct) >= 40) {
+    confidence -= 15;
+    trafficConfounded = true;
+  }
+
+  // Statistical guards: a move inside normal weekly noise, or off a tiny
+  // sample, can't support a confident verdict.
+  if (withinNoiseBand) {
+    confidence -= 15;
+  }
+  if (lowVolume) {
+    confidence -= 20;
   }
 
   // Floor so we never report negative confidence numbers downstream.
@@ -199,7 +236,35 @@ export function buildRecommendation({
     }
   }
 
-  // Re-pick tone after potential conversion override.
+  // AOV-aware nuance for price changes. For a deliberate price move, AOV is
+  // the decision-relevant axis: a price increase that trades volume for a
+  // higher average order value (revenue not cratering) is the intended
+  // elasticity outcome, not a pure loss — and a price cut that lifts volume
+  // while sharply dropping AOV is a margin risk, not a clean win. Only applies
+  // to product price events; theme events use the conversion override above.
+  // Thresholds (±5 / ±10) are tunable.
+  const priceDir = eventContext?.priceDirection;
+  if (
+    (eventType === "products_update" || eventType === "products_create") &&
+    aovDeltaPct !== null
+  ) {
+    if (priceDir === "up" && aovDeltaPct >= 5 && label === "negative") {
+      label = "mixed";
+      strength = "moderate";
+    } else if (priceDir === "down" && aovDeltaPct <= -10 && label === "positive") {
+      label = "mixed";
+      strength = "moderate";
+    }
+  }
+
+  // Statistical guards never flip a label, but they forbid a "strong" claim:
+  // if the move is within normal weekly noise or off a tiny sample, the most
+  // we'll say is "moderate".
+  if ((withinNoiseBand || lowVolume) && strength === "strong") {
+    strength = "moderate";
+  }
+
+  // Re-pick tone after potential conversion / AOV override.
   tone = "info";
   if (label === "positive" && strength === "strong") tone = "success";
   else if (label === "negative" && strength === "strong") tone = "critical";
@@ -218,8 +283,23 @@ export function buildRecommendation({
     expectedBuckets,
     partialData,
     overlappingEvents,
+    overlappingEventLabels,
     windowMinutes,
   });
+
+  if (trafficConfounded) {
+    drivers.push(
+      "Large traffic swing — orders/revenue Δ may reflect traffic, not the change (confidence reduced)",
+    );
+  }
+
+  if (lowVolume) {
+    drivers.push("Low volume — too few orders for a strong call (capped at moderate)");
+  }
+
+  if (withinNoiseBand) {
+    drivers.push("Δ within normal weekly variance (≤1σ) — not distinguishable from noise");
+  }
 
   return {
     label,
@@ -357,6 +437,7 @@ function buildDrivers({
   expectedBuckets,
   partialData,
   overlappingEvents,
+  overlappingEventLabels,
   windowMinutes,
 }: {
   revenueDeltaPct: number | null;
@@ -369,6 +450,7 @@ function buildDrivers({
   expectedBuckets: number;
   partialData: boolean;
   overlappingEvents: number;
+  overlappingEventLabels: string[];
   windowMinutes: number;
 }): string[] {
   const drivers: string[] = [];
@@ -402,7 +484,19 @@ function buildDrivers({
   drivers.push(`Data coverage: before ${coverageBefore}/${expectedBuckets}, after ${coverageAfter}/${expectedBuckets} buckets`);
 
   if (overlappingEvents > 0) {
-    drivers.push(`Overlapping events: ${overlappingEvents}`);
+    if (overlappingEventLabels.length > 0) {
+      // List what competes for attribution. Cap the list so the driver stays
+      // readable; note the remainder.
+      const MAX_SHOWN = 3;
+      const shown = overlappingEventLabels.slice(0, MAX_SHOWN);
+      const extra = overlappingEvents - shown.length;
+      const suffix = extra > 0 ? ` +${extra} more` : "";
+      drivers.push(
+        `Overlapping events (${overlappingEvents}) compete for attribution: ${shown.join(", ")}${suffix}`,
+      );
+    } else {
+      drivers.push(`Overlapping events: ${overlappingEvents}`);
+    }
   }
 
   if (partialData) {

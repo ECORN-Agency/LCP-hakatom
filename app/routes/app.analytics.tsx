@@ -161,8 +161,6 @@ export default function Analytics() {
     return true;
   });
 
-  const selectedEvent = events.find((e) => e.id === selectedEventId);
-
   const handleBackfill = () => {
     fetcher.submit(
       { intent: "backfill", minutes: minutes.toString() },
@@ -298,12 +296,23 @@ export default function Analytics() {
     const ordersDeltaPct = beforeOrders > 0 ? ((afterOrders - beforeOrders) / beforeOrders) * 100 : null;
     const aovDeltaPct = beforeAOV !== null && beforeAOV > 0 && afterAOV !== null ? ((afterAOV - beforeAOV) / beforeAOV) * 100 : null;
 
-    const overlappingEvents = events.filter(
+    const overlappingEventList = events.filter(
       (e) =>
         e.id !== event.id &&
         new Date(e.occurredAt) >= beforeStart &&
         new Date(e.occurredAt) <= afterEnd
-    ).length;
+    );
+    const overlappingEvents = overlappingEventList.length;
+    // Human labels (type @ HH:MM) so the verdict can name what competes for
+    // attribution, not just count it.
+    const overlappingEventLabels = overlappingEventList
+      .sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime())
+      .map((e) => {
+        const t = new Date(e.occurredAt);
+        const hh = String(t.getUTCHours()).padStart(2, "0");
+        const mm = String(t.getUTCMinutes()).padStart(2, "0");
+        return `${e.type} @ ${hh}:${mm} UTC`;
+      });
 
     return {
       beforeRevenue,
@@ -322,30 +331,17 @@ export default function Analytics() {
       coverageAfter: afterBuckets.length,
       expectedBuckets,
       overlappingEvents,
+      overlappingEventLabels,
       partialData: anyPartial,
     };
   };
 
-  const observedChangeData = calculateObservedChange(selectedEvent);
-  
-  const observedChange = observedChangeData ? {
-    ...observedChangeData,
-    recommendation: observedChangeData.waiting ? null : buildRecommendation({
-      eventType: selectedEvent.type,
-      eventContext: extractEventContext(selectedEvent),
-      windowMinutes: compareMinutes,
-      revenueDeltaPct: observedChangeData.revenueDeltaPct,
-      ordersDeltaPct: observedChangeData.ordersDeltaPct,
-      aovDeltaPct: observedChangeData.aovDeltaPct,
-      conversionDeltaPct: baselineData?.funnel?.deltaPct?.conversionRate ?? null,
-      pageViewsDeltaPct: baselineData?.funnel?.deltaPct?.pageViews ?? null,
-      partialData: observedChangeData.partialData,
-      overlappingEvents: observedChangeData.overlappingEvents,
-      coverageBefore: observedChangeData.coverageBefore,
-      coverageAfter: observedChangeData.coverageAfter,
-      expectedBuckets: observedChangeData.expectedBuckets,
-    }),
-  } : null;
+  // NOTE: the rendered verdict is built per-row inside the events list below
+  // (see `eventObservedChange`), where revenue/orders/AOV are compared against
+  // the rolling baseline with a before/after fallback. There used to be a
+  // second, unused `observedChange` built here from the before/after window —
+  // it was dead code and is intentionally removed to avoid two divergent
+  // verdict paths.
 
   return (
     <s-page id="analytics-page" heading="Analytics">
@@ -515,22 +511,51 @@ export default function Analytics() {
               // events can react to conversion-rate drops directly.
               const funnelDelta = isSelected ? baselineData?.funnel?.deltaPct : null;
 
+              // The verdict should compare revenue/orders/AOV against the rolling
+              // baseline (same slot, last N weeks) — same seasonality-cancelling
+              // method as the conversion signal. Fall back to the before/after
+              // window only when there is no baseline history yet (baselineData
+              // is fetched per-selected-event, so this only applies to it).
+              const rowUsesBaseline =
+                isSelected &&
+                !!baselineData &&
+                (baselineData?.baseline?.weeksWithData ?? 0) > 0;
+              const bd = rowUsesBaseline ? baselineData?.deltaPct : null;
+              const verdictRevenueDeltaPct = rowUsesBaseline
+                ? bd?.revenue ?? null
+                : eventObservedChangeData?.revenueDeltaPct ?? null;
+              const verdictOrdersDeltaPct = rowUsesBaseline
+                ? bd?.orders ?? null
+                : eventObservedChangeData?.ordersDeltaPct ?? null;
+              const verdictAovDeltaPct = rowUsesBaseline
+                ? bd?.aov ?? null
+                : eventObservedChangeData?.aovDeltaPct ?? null;
+              const verdictBasis: "baseline" | "before_after" = rowUsesBaseline
+                ? "baseline"
+                : "before_after";
+
               const eventObservedChange: any = eventObservedChangeData ? {
                 ...eventObservedChangeData,
+                verdictBasis,
                 recommendation: eventObservedChangeData.waiting ? null : buildRecommendation({
                   eventType: event.type,
                   eventContext: extractEventContext(event),
                   windowMinutes: compareMinutes,
-                  revenueDeltaPct: eventObservedChangeData.revenueDeltaPct,
-                  ordersDeltaPct: eventObservedChangeData.ordersDeltaPct,
-                  aovDeltaPct: eventObservedChangeData.aovDeltaPct,
+                  revenueDeltaPct: verdictRevenueDeltaPct,
+                  ordersDeltaPct: verdictOrdersDeltaPct,
+                  aovDeltaPct: verdictAovDeltaPct,
                   conversionDeltaPct: funnelDelta?.conversionRate ?? null,
                   pageViewsDeltaPct: funnelDelta?.pageViews ?? null,
                   partialData: eventObservedChangeData.partialData,
                   overlappingEvents: eventObservedChangeData.overlappingEvents,
+                  overlappingEventLabels: eventObservedChangeData.overlappingEventLabels,
                   coverageBefore: eventObservedChangeData.coverageBefore,
                   coverageAfter: eventObservedChangeData.coverageAfter,
                   expectedBuckets: eventObservedChangeData.expectedBuckets,
+                  // Statistical guards only apply to the baseline-based verdict;
+                  // the before/after fallback has no weekly distribution to test.
+                  withinNoiseBand: rowUsesBaseline ? baselineData?.guards?.withinNoiseBand ?? false : false,
+                  lowVolume: rowUsesBaseline ? baselineData?.guards?.lowVolume ?? false : false,
                 }),
               } : null;
               
@@ -667,6 +692,16 @@ export default function Analytics() {
                                 v === null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
                               const fmtRate = (v: number | null) =>
                                 v === null ? "n/a" : `${(v * 100).toFixed(2)}%`;
+                              const fmtCount = (v: number) =>
+                                Number.isInteger(v) ? `${v}` : v.toFixed(1);
+                              // Conversion now compares against the rolling
+                              // baseline (same slot, last N weeks) when history
+                              // exists; only new stores fall back to before/after.
+                              const usesBaseline = f.basis === "baseline";
+                              const refLabel = usesBaseline
+                                ? `Expected (${f.weeksWithData}wk)`
+                                : "Before";
+                              const actualLabel = usesBaseline ? "Actual" : "After";
                               return (
                                 <s-box
                                   id={`funnel-box-${event.id}`}
@@ -688,9 +723,9 @@ export default function Analytics() {
                                     {hasAnyTraffic ? (
                                       <s-stack gap="small">
                                         {[
-                                          { label: "Page views", before: f.before.pageViews, after: f.after.pageViews, pct: f.deltaPct.pageViews },
-                                          { label: "Cart adds", before: f.before.cartAdds, after: f.after.cartAdds, pct: f.deltaPct.cartAdds },
-                                          { label: "Checkouts started", before: f.before.checkoutsStarted, after: f.after.checkoutsStarted, pct: f.deltaPct.checkoutsStarted },
+                                          { label: "Page views", before: fmtCount(f.before.pageViews), after: fmtCount(f.after.pageViews), pct: f.deltaPct.pageViews },
+                                          { label: "Cart adds", before: fmtCount(f.before.cartAdds), after: fmtCount(f.after.cartAdds), pct: f.deltaPct.cartAdds },
+                                          { label: "Checkouts started", before: fmtCount(f.before.checkoutsStarted), after: fmtCount(f.after.checkoutsStarted), pct: f.deltaPct.checkoutsStarted },
                                           { label: "Conversion rate", before: fmtRate(f.before.conversionRate), after: fmtRate(f.after.conversionRate), pct: f.deltaPct.conversionRate },
                                         ].map((row) => (
                                           <div
@@ -703,8 +738,8 @@ export default function Analytics() {
                                             }}
                                           >
                                             <s-text type="strong">{row.label}</s-text>
-                                            <s-text color="subdued">Before: {row.before}</s-text>
-                                            <s-text color="subdued">After: {row.after}</s-text>
+                                            <s-text color="subdued">{refLabel}: {row.before}</s-text>
+                                            <s-text color="subdued">{actualLabel}: {row.after}</s-text>
                                             <div style={{ textAlign: "right" }}>
                                               <s-text type="strong">{fmtPct(row.pct)}</s-text>
                                             </div>
@@ -713,6 +748,9 @@ export default function Analytics() {
                                         <s-text color="subdued">
                                           Pixel data arrives in seconds vs orders that lag by minutes-to-hours.
                                           For theme changes, conversion rate Δ is the earliest meaningful signal.
+                                          {usesBaseline
+                                            ? ` Compared against the rolling baseline (same slot, last ${f.weeksWithData} week${f.weeksWithData === 1 ? "" : "s"}) to cancel day/hour seasonality.`
+                                            : " No funnel history yet — compared before vs after the event (seasonality not yet cancelled)."}
                                         </s-text>
                                       </s-stack>
                                     ) : (
@@ -838,6 +876,11 @@ export default function Analytics() {
                                     </s-badge>
                                   </s-stack>
                                   <s-text>{eventObservedChange.recommendation.text}</s-text>
+                                  <s-text color="subdued">
+                                    {eventObservedChange.verdictBasis === "baseline"
+                                      ? "Revenue/orders compared vs rolling baseline (same slot, last weeks)."
+                                      : "Revenue/orders compared vs before/after window (no baseline history yet)."}
+                                  </s-text>
                                   <s-stack id={`drivers-list-${event.id}`} gap="small">
                                     {eventObservedChange.recommendation.drivers.map((driver: string, idx: number) => (
                                       <s-text key={idx} color="subdued">

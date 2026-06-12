@@ -3,7 +3,11 @@ import {
   computeRollingBaseline,
   fetchActualAfterEvent,
 } from "../models/baseline.server";
-import { fetchPixelFunnel, funnelDeltaPct } from "../models/pixelMetrics.server";
+import {
+  fetchPixelFunnel,
+  funnelDeltaPct,
+  computeRollingFunnelBaseline,
+} from "../models/pixelMetrics.server";
 import { logger } from "../logger.server";
 
 // GET /api/baseline?eventTime=ISO&windowMinutes=1440&lookbackWeeks=4
@@ -48,13 +52,19 @@ export const loader = async ({ request }: { request: Request }) => {
   });
 
   try {
-    // Pixel funnel windows — same shape as the metric-bucket comparison: W
-    // minutes before the event vs W minutes after.
+    // Pixel funnel windows.
+    //   - "after"   = funnel in [event, event+W]  (the actual signal)
+    //   - "expected"= rolling funnel baseline over the same slot, last N weeks
+    //   - "before"  = funnel in [event-W, event]  (fallback only)
+    // The conversion delta drives the theme-event verdict override, so it must
+    // use the same seasonality-cancelling rolling baseline as orders/revenue —
+    // NOT the naive before/after window (which mixes day-of-week + hour-of-day
+    // noise). We only fall back to before/after when there is no history yet.
     const windowMs = windowMinutes * 60 * 1000;
     const beforeStart = new Date(eventDate.getTime() - windowMs);
     const afterEnd = new Date(eventDate.getTime() + windowMs);
 
-    const [actual, baseline, funnelBefore, funnelAfter] = await Promise.all([
+    const [actual, baseline, funnelBefore, funnelAfter, funnelBaseline] = await Promise.all([
       fetchActualAfterEvent({ shop: session.shop, eventTime: eventDate, windowMinutes }),
       computeRollingBaseline({
         shop: session.shop,
@@ -64,11 +74,20 @@ export const loader = async ({ request }: { request: Request }) => {
       }),
       fetchPixelFunnel(session.shop, beforeStart, eventDate),
       fetchPixelFunnel(session.shop, eventDate, afterEnd),
+      computeRollingFunnelBaseline(session.shop, eventDate, windowMinutes, lookbackWeeks),
     ]);
 
-    // funnelDeltaPct signature is (before, after) — pass them in that order
-    // so the resulting Δ% is positive when "after" is higher than "before".
-    const funnelDelta = funnelDeltaPct(funnelBefore, funnelAfter);
+    // Prefer the rolling baseline as the comparison reference; fall back to the
+    // before-window when there is no funnel history yet (new store / new pixel).
+    const useFunnelBaseline = funnelBaseline.weeksWithData > 0;
+    const funnelReference = useFunnelBaseline ? funnelBaseline.expected : funnelBefore;
+    const funnelBasis: "baseline" | "before_after" = useFunnelBaseline
+      ? "baseline"
+      : "before_after";
+
+    // funnelDeltaPct signature is (reference, actual) — pass them in that order
+    // so the resulting Δ% is positive when "after" is higher than the reference.
+    const funnelDelta = funnelDeltaPct(funnelReference, funnelAfter);
 
     const deltaPct = {
       revenue:
@@ -85,11 +104,34 @@ export const loader = async ({ request }: { request: Request }) => {
           : null,
     };
 
+    // Statistical guards for the verdict (consumed by buildRecommendation):
+    //   lowVolume       — too few orders to make a strong call.
+    //   withinNoiseBand — actual is within ~1σ of the weekly baseline for BOTH
+    //                     orders and revenue, i.e. indistinguishable from the
+    //                     store's normal week-to-week swing.
+    const VOLUME_FLOOR_ORDERS = 5;
+    const lowVolume =
+      baseline.expectedOrders === null ||
+      baseline.expectedOrders < VOLUME_FLOOR_ORDERS ||
+      actual.actualOrders < VOLUME_FLOOR_ORDERS;
+
+    const withinNoiseBand =
+      baseline.weeksWithData >= 2 &&
+      baseline.stdDevOrders !== null &&
+      baseline.stdDevRevenue !== null &&
+      baseline.expectedOrders !== null &&
+      baseline.expectedRevenue !== null &&
+      Math.abs(actual.actualOrders - baseline.expectedOrders) <= baseline.stdDevOrders &&
+      Math.abs(actual.actualRevenue - baseline.expectedRevenue) <= baseline.stdDevRevenue;
+
     log.info(
       {
         weeksWithData: baseline.weeksWithData,
         actualOrders: actual.actualOrders,
         expectedOrders: baseline.expectedOrders,
+        stdDevOrders: baseline.stdDevOrders,
+        lowVolume,
+        withinNoiseBand,
         pageViewsBefore: funnelBefore.pageViews,
         pageViewsAfter: funnelAfter.pageViews,
       },
@@ -100,10 +142,16 @@ export const loader = async ({ request }: { request: Request }) => {
       actual,
       baseline,
       deltaPct,
+      guards: { lowVolume, withinNoiseBand },
       funnel: {
-        before: funnelBefore,
+        // `before` is the comparison reference shown in the UI: the rolling
+        // baseline when available, else the literal before-window.
+        before: funnelReference,
         after: funnelAfter,
         deltaPct: funnelDelta,
+        basis: funnelBasis,
+        weeksWithData: funnelBaseline.weeksWithData,
+        totalWeeks: funnelBaseline.totalWeeks,
       },
     });
   } catch (err) {

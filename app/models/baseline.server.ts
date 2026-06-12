@@ -22,6 +22,12 @@ export type BaselineResult = {
   expectedOrders: number | null;
   expectedRevenue: number | null;
   expectedAOV: number | null;
+  // Population standard deviation of the per-week orders/revenue totals. Used
+  // by callers to judge significance — a delta smaller than ~1σ is within the
+  // store's normal week-to-week swing and should not produce a "strong"
+  // verdict. Null when fewer than 2 weeks have data (spread is undefined).
+  stdDevOrders: number | null;
+  stdDevRevenue: number | null;
   weeksWithData: number;
   totalWeeks: number;
   perWeek: (BaselineWeek | null)[];
@@ -59,6 +65,13 @@ export async function computeRollingBaseline({
       select: { orders: true, revenue: true },
     });
 
+    // A week with zero rows is treated as "no data", not a confirmed zero.
+    // Rationale: backfill writes a row for every 10-min slot (including 0/0),
+    // but live order webhooks only create a row when an order arrives. So an
+    // absent week most likely means "this period was never collected" rather
+    // than "the store genuinely sold nothing". Counting it as 0 would bias the
+    // expected value downward; skipping it (and letting bucketCoverage / the
+    // coverage confidence penalty reflect the thinness) is the safer choice.
     if (buckets.length === 0) {
       perWeek.push(null);
       continue;
@@ -81,6 +94,8 @@ export async function computeRollingBaseline({
       expectedOrders: null,
       expectedRevenue: null,
       expectedAOV: null,
+      stdDevOrders: null,
+      stdDevRevenue: null,
       weeksWithData: 0,
       totalWeeks: lookbackWeeks,
       perWeek,
@@ -94,10 +109,22 @@ export async function computeRollingBaseline({
     validWeeks.reduce((sum, w) => sum + w.revenue, 0) / validWeeks.length;
   const expectedAOV = expectedOrders > 0 ? expectedRevenue / expectedOrders : null;
 
+  // Population stddev of the per-week totals. Needs >=2 weeks to be meaningful.
+  const popStdDev = (values: number[], mean: number): number | null => {
+    if (values.length < 2) return null;
+    const variance =
+      values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+    return Math.sqrt(variance);
+  };
+  const stdDevOrders = popStdDev(validWeeks.map((w) => w.orders), expectedOrders);
+  const stdDevRevenue = popStdDev(validWeeks.map((w) => w.revenue), expectedRevenue);
+
   return {
     expectedOrders,
     expectedRevenue,
     expectedAOV,
+    stdDevOrders,
+    stdDevRevenue,
     weeksWithData: validWeeks.length,
     totalWeeks: lookbackWeeks,
     perWeek,

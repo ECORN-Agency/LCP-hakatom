@@ -165,6 +165,118 @@ describe("buildRecommendation — theme conversion override", () => {
   });
 });
 
+describe("buildRecommendation — pageViews as confidence modifier", () => {
+  it("large traffic swing lowers confidence and adds a driver note", () => {
+    // clean high (100) - 15 (coverageBefore) - 15 (traffic swing) = 70 → medium
+    const r = buildRecommendation(
+      base({
+        revenueDeltaPct: 12,
+        ordersDeltaPct: 11,
+        pageViewsDeltaPct: 60,
+        coverageBefore: 2,
+      }),
+    );
+    expect(r.confidence).toBe("medium");
+    expect(r.drivers.some((d: string) => d.includes("Large traffic swing"))).toBe(true);
+  });
+
+  it("traffic swing does NOT change the label", () => {
+    const r = buildRecommendation(
+      base({ revenueDeltaPct: 12, ordersDeltaPct: 11, pageViewsDeltaPct: 80 }),
+    );
+    expect(r.label).toBe("positive");
+  });
+
+  it("small traffic move (<40%) applies no penalty", () => {
+    const r = buildRecommendation(
+      base({ revenueDeltaPct: 12, ordersDeltaPct: 11, pageViewsDeltaPct: 20 }),
+    );
+    expect(r.confidence).toBe("high");
+    expect(r.drivers.some((d: string) => d.includes("Large traffic swing"))).toBe(false);
+  });
+});
+
+describe("buildRecommendation — AOV nuance for price events", () => {
+  it("price up + both down but AOV up → reframed from negative to mixed", () => {
+    const r = buildRecommendation(
+      base({
+        eventType: "products_update",
+        eventContext: { priceDirection: "up" },
+        revenueDeltaPct: -5,
+        ordersDeltaPct: -12,
+        aovDeltaPct: 8,
+      }),
+    );
+    expect(r.label).toBe("mixed");
+    expect(r.tone).toBe("warning");
+  });
+
+  it("price down + positive but AOV crashed → reframed to mixed (margin risk)", () => {
+    const r = buildRecommendation(
+      base({
+        eventType: "products_update",
+        eventContext: { priceDirection: "down" },
+        revenueDeltaPct: 4,
+        ordersDeltaPct: 12,
+        aovDeltaPct: -11,
+      }),
+    );
+    expect(r.label).toBe("mixed");
+  });
+
+  it("AOV nuance does not fire without a price direction", () => {
+    const r = buildRecommendation(
+      base({
+        eventType: "products_update",
+        revenueDeltaPct: -5,
+        ordersDeltaPct: -12,
+        aovDeltaPct: 8,
+      }),
+    );
+    expect(r.label).toBe("negative");
+  });
+});
+
+describe("buildRecommendation — statistical guards", () => {
+  it("withinNoiseBand caps strength to moderate and adds a driver", () => {
+    const r = buildRecommendation(
+      base({ revenueDeltaPct: 15, ordersDeltaPct: 12, withinNoiseBand: true }),
+    );
+    expect(r.label).toBe("positive");
+    expect(r.strength).toBe("moderate"); // capped down from strong
+    expect(r.drivers.some((d: string) => d.includes("within normal weekly variance"))).toBe(true);
+  });
+
+  it("lowVolume caps strength to moderate and adds a driver", () => {
+    const r = buildRecommendation(
+      base({ revenueDeltaPct: 15, ordersDeltaPct: 12, lowVolume: true }),
+    );
+    expect(r.strength).toBe("moderate");
+    expect(r.drivers.some((d: string) => d.includes("Low volume"))).toBe(true);
+  });
+
+  it("guards dock confidence but never flip the label", () => {
+    // both down strongly → negative; guards keep label, cap strength, drop conf
+    // 100 - 15 (noise) - 20 (volume) = 65 → medium
+    const r = buildRecommendation(
+      base({
+        revenueDeltaPct: -15,
+        ordersDeltaPct: -12,
+        withinNoiseBand: true,
+        lowVolume: true,
+      }),
+    );
+    expect(r.label).toBe("negative");
+    expect(r.strength).toBe("moderate");
+    expect(r.confidence).toBe("medium");
+  });
+
+  it("no guards → strong verdict survives (defaults unchanged)", () => {
+    const r = buildRecommendation(base({ revenueDeltaPct: 15, ordersDeltaPct: 12 }));
+    expect(r.strength).toBe("strong");
+  });
+});
+
 describe("buildRecommendation — recommendation text by price direction", () => {
   it("price up + positive → elasticity message", () => {
     const r = buildRecommendation(
@@ -212,6 +324,36 @@ describe("buildRecommendation — drivers", () => {
     const r = buildRecommendation(base({ revenueDeltaPct: null, ordersDeltaPct: null }));
     expect(r.drivers).toContain("Revenue Δ: n/a (baseline=0)");
     expect(r.drivers).toContain("Orders Δ: n/a (baseline=0)");
+  });
+
+  it("lists overlapping event labels when provided", () => {
+    const r = buildRecommendation(
+      base({
+        overlappingEvents: 2,
+        overlappingEventLabels: ["theme_published @ 14:05 UTC", "products_update @ 14:12 UTC"],
+      }),
+    );
+    const d = r.drivers.find((x: string) => x.includes("compete for attribution"));
+    expect(d).toBeTruthy();
+    expect(d).toContain("theme_published @ 14:05 UTC");
+    expect(d).toContain("products_update @ 14:12 UTC");
+  });
+
+  it("caps the overlapping list at 3 and notes the remainder", () => {
+    const r = buildRecommendation(
+      base({
+        overlappingEvents: 5,
+        overlappingEventLabels: ["a @ 1", "b @ 2", "c @ 3", "d @ 4", "e @ 5"],
+      }),
+    );
+    const d = r.drivers.find((x: string) => x.includes("compete for attribution"));
+    expect(d).toContain("+2 more");
+    expect(d).not.toContain("d @ 4");
+  });
+
+  it("falls back to a plain count when no labels are passed", () => {
+    const r = buildRecommendation(base({ overlappingEvents: 3 }));
+    expect(r.drivers).toContain("Overlapping events: 3");
   });
 });
 

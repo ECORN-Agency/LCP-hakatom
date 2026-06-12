@@ -92,6 +92,67 @@ export type FunnelDeltaPct = {
   checkoutInitiationRate: number | null;
 };
 
+// Rolling funnel baseline: instead of comparing the W-minutes-before window
+// against the W-minutes-after window (which mixes day-of-week + hour-of-day
+// noise into the conversion signal), compare the after-event window against
+// the SAME wall-clock slot over the last N weeks. This mirrors
+// computeRollingBaseline (orders/revenue) so conversion uses the same
+// seasonality-cancelling method as the rest of the verdict.
+//
+// Counts are averaged across weeks that actually had pixel traffic; rates
+// (conversionRate / checkoutInitiationRate) are recomputed from the averaged
+// counts. weeksWithData=0 means no history yet — caller must fall back to the
+// before/after view.
+const FUNNEL_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+export type RollingFunnelBaseline = {
+  expected: PixelFunnel;
+  weeksWithData: number;
+  totalWeeks: number;
+};
+
+export async function computeRollingFunnelBaseline(
+  shop: string,
+  eventTime: Date,
+  windowMinutes: number,
+  lookbackWeeks = 4,
+): Promise<RollingFunnelBaseline> {
+  const windowMs = windowMinutes * 60 * 1000;
+
+  const weekFunnels: PixelFunnel[] = [];
+  for (let weekOffset = 1; weekOffset <= lookbackWeeks; weekOffset++) {
+    const slotStart = new Date(eventTime.getTime() - weekOffset * FUNNEL_WEEK_MS);
+    const slotEnd = new Date(slotStart.getTime() + windowMs);
+    const f = await fetchPixelFunnel(shop, slotStart, slotEnd);
+    // Treat a slot with zero page views as "no data" (storefront closed / no
+    // traffic) rather than a real zero, so it doesn't drag the average down.
+    if (f.pageViews > 0) {
+      weekFunnels.push(f);
+    }
+  }
+
+  if (weekFunnels.length === 0) {
+    return { expected: emptyFunnel(), weeksWithData: 0, totalWeeks: lookbackWeeks };
+  }
+
+  const n = weekFunnels.length;
+  const avg = (pick: (f: PixelFunnel) => number) =>
+    weekFunnels.reduce((s, f) => s + pick(f), 0) / n;
+
+  const expected = emptyFunnel();
+  expected.pageViews = avg((f) => f.pageViews);
+  expected.productViews = avg((f) => f.productViews);
+  expected.cartAdds = avg((f) => f.cartAdds);
+  expected.checkoutsStarted = avg((f) => f.checkoutsStarted);
+  expected.checkoutsCompleted = avg((f) => f.checkoutsCompleted);
+  if (expected.pageViews > 0) {
+    expected.conversionRate = expected.checkoutsCompleted / expected.pageViews;
+    expected.checkoutInitiationRate = expected.checkoutsStarted / expected.pageViews;
+  }
+
+  return { expected, weeksWithData: n, totalWeeks: lookbackWeeks };
+}
+
 export function funnelDeltaPct(before: PixelFunnel, after: PixelFunnel): FunnelDeltaPct {
   const pct = (a: number | null, b: number | null) => {
     if (a === null || b === null || b === 0) return null;
