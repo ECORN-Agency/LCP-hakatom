@@ -312,6 +312,30 @@ npm run test:watch    # перезапуск при изменениях
 сети и БД — серверные зависимости (`prisma`, `logger`, GraphQL-wrapper)
 мокаются через `vi.mock`.
 
+### Интеграционные тесты (реальный Postgres)
+
+Юнит-тесты с мок-Prisma не доказывают то, что зависит от самой БД:
+`FOR UPDATE SKIP LOCKED`, сериализацию advisory-лока (H3) и idempotency на
+unique-ограничении. Для этого есть отдельный сьют (`app/**/*.itest.ts`),
+который гоняется против **настоящего** Postgres.
+
+```bash
+npm run test:integration
+```
+
+`scripts/with-test-db.cjs` поднимает эфемерный Postgres через
+[`embedded-postgres`](https://www.npmjs.com/package/embedded-postgres) (без
+Docker — бинарь PG скачивается при первом запуске), применяет схему
+(`prisma db push`), запускает `vitest --config vitest.integration.config.ts` и
+гасит БД. Покрытие:
+
+| Файл | Что проверяет |
+|---|---|
+| `app/models/workerDrain.itest.ts` | реальный `FOR UPDATE SKIP LOCKED` (нет двойной обработки под конкуренцией), reclaim протухших processing (H1), перманентный fail unknown-топика (H2), uniqueness `webhookId` |
+| `app/lib/dbLock.itest.ts` | advisory-лок реально сериализует read-modify-write — N конкурентных секций схлопываются в одну строку со счётчиком N (H3) |
+
+Не входит в `npm run test` и в pre-push хук (требует поднятия БД и медленнее).
+
 ### Pre-push git hook
 
 Тесты гоняются автоматически **перед каждым `git push`** — бесплатно, без
