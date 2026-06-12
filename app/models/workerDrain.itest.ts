@@ -6,8 +6,6 @@ import { drainWebhookJobs } from "./workerDrain.server";
 // FOR UPDATE SKIP LOCKED, the stale-processing reclaim (H1) and permanent
 // failure handling (H2) — none of which a mocked prisma can prove.
 
-const STALE_MS = 6 * 60 * 1000; // older than the worker's 5-min reclaim window
-
 function order(n: number) {
   return {
     shop: "s.myshopify.com",
@@ -54,17 +52,16 @@ describe("drainWebhookJobs (integration)", () => {
   });
 
   it("reclaims a stale 'processing' job but leaves a fresh one alone (H1)", async () => {
-    await prisma.webhookJob.create({
-      data: {
-        ...order(1),
-        status: "processing",
-        attempts: 1,
-        startedAt: new Date(Date.now() - STALE_MS),
-      },
+    const stale = await prisma.webhookJob.create({
+      data: { ...order(1), status: "processing", attempts: 1 },
     });
-    await prisma.webhookJob.create({
-      data: { ...order(2), status: "processing", attempts: 1, startedAt: new Date() },
+    const fresh = await prisma.webhookJob.create({
+      data: { ...order(2), status: "processing", attempts: 1 },
     });
+    // Set startedAt with SQL NOW() (same convention the worker writes with), so
+    // the comparison is timezone-consistent: stale = 6 min ago, fresh = now.
+    await prisma.$executeRaw`UPDATE "WebhookJob" SET "startedAt" = NOW() - INTERVAL '6 minutes' WHERE id = ${stale.id}`;
+    await prisma.$executeRaw`UPDATE "WebhookJob" SET "startedAt" = NOW() WHERE id = ${fresh.id}`;
 
     const r = await drainWebhookJobs();
 

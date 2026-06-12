@@ -8,11 +8,10 @@ import { processWebhookJob } from "./webhookProcessors.server";
 
 const DEFAULT_BATCH_SIZE = 25;
 
-// A job left in `processing` longer than this is assumed orphaned — the
+// A job left in `processing` longer than 5 minutes is assumed orphaned — the
 // function that claimed it crashed / timed out (Vercel) before writing a
-// terminal status. We reclaim it on the next drain. Mirrors the backfill
-// lock's STALE_LOCK_MS reclaim. (H1)
-const STALE_PROCESSING_MS = 5 * 60 * 1000;
+// terminal status. We reclaim it on the next drain (see the INTERVAL in the
+// claim query below). Mirrors the backfill lock's STALE_LOCK_MS reclaim. (H1)
 
 // Max delivery attempts before a job is parked in `failed`. Transient errors
 // (network blip, GraphQL hiccup) get retried up to this many times by being
@@ -32,14 +31,19 @@ export async function drainWebhookJobs(batchSize: number = DEFAULT_BATCH_SIZE) {
   // concurrent worker invocations never grab the same row. We claim both
   // fresh `pending` rows and `processing` rows whose claim has gone stale
   // (orphaned by a crashed/timed-out invocation). (H1)
-  const staleCutoff = new Date(Date.now() - STALE_PROCESSING_MS);
+  // Staleness is compared entirely in SQL (NOW() - INTERVAL) rather than
+  // against a JS Date param. `startedAt` is written with NOW() in this very
+  // query, and the column is `timestamp` (without tz); comparing it to a
+  // JS Date (a UTC instant) skews by the server's timezone offset and would
+  // wrongly reclaim fresh, in-flight jobs. Keeping both sides on NOW() makes
+  // the window self-consistent regardless of timezone.
   const claimed = await prisma.$queryRaw<any[]>`
     UPDATE "WebhookJob"
     SET status = 'processing', "startedAt" = NOW(), attempts = attempts + 1
     WHERE id IN (
       SELECT id FROM "WebhookJob"
       WHERE status = 'pending'
-         OR (status = 'processing' AND "startedAt" < ${staleCutoff})
+         OR (status = 'processing' AND "startedAt" < NOW() - INTERVAL '5 minutes')
       ORDER BY "createdAt" ASC
       LIMIT ${batchSize}
       FOR UPDATE SKIP LOCKED

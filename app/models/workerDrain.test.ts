@@ -103,8 +103,9 @@ describe("drainWebhookJobs", () => {
     const sql = (strings as unknown as string[]).join("?");
     expect(sql).toContain("status = 'processing'");
     expect(sql).toContain("status = 'pending'");
-    // interpolated values: stale cutoff Date + batch size
+    // Staleness is a SQL interval (timezone-safe), not an interpolated JS Date.
+    expect(sql).toContain("NOW() - INTERVAL '5 minutes'");
     expect(values).toContain(10);
-    expect(values.some((v) => v instanceof Date)).toBe(true);
+    expect(values.some((v) => v instanceof Date)).toBe(false);
   });
 });
